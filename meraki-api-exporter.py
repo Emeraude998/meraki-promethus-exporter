@@ -7,7 +7,7 @@ import meraki
 
 
 def get_devices(devices, dashboard, organizationId):
-    devices.extend(dashboard.organizations.getOrganizationDevicesStatuses(organizationId=organizationId, total_pages="all"))
+    devices.extend(dashboard.organizations.getOrganizationDevicesAvailabilities(organizationId=organizationId, total_pages="all"))
     print('Got', len(devices), 'Devices')
 
 
