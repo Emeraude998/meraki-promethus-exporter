@@ -68,20 +68,63 @@ def get_usage(dashboard, organizationId):
     if 'vpn' in COLLECT_EXTRA:
         t4.join()
     t5.join()
+    # Fetch networks for this organization so we can report network names instead of IDs
+    try:
+        networks = dashboard.organizations.getOrganizationNetworks(organizationId=organizationId, total_pages="all")
+        networks_map = {n.get('id'): n.get('name') for n in networks}
+    except Exception:
+        networks_map = {}
 
     print('Combining collected data\n')
 
     the_list = {}
-    values_list = ['name', 'model', 'mac', 'wan1Ip', 'wan2Ip', 'lanIp', 'publicIp', 'networkId', 'status', 'usingCellularFailover']
+    # Normalize device fields coming from different Meraki endpoints
     for device in devices:
-        the_list[device['serial']] = {}
-        the_list[device['serial']]['orgName'] = org_data['name']
-        for value in values_list:
-            try:
-                if device[value] is not None:
-                    the_list[device['serial']][value] = device[value]
-            except KeyError:
-                pass
+        serial = device.get('serial')
+        if not serial:
+            # Skip devices without serial (some API responses may include non-serial entries)
+            continue
+
+        the_list[serial] = {}
+        the_list[serial]['orgName'] = org_data.get('name', '')
+
+        # Name: prefer explicit name, fall back to MAC when name empty
+        name = device.get('name') or device.get('displayName') or device.get('mac') or ''
+        if name:
+            the_list[serial]['name'] = name
+
+        # Model/product type: different endpoints may use 'model' or 'productType'
+        model = device.get('model') or device.get('productType') or device.get('product_type')
+        if model:
+            the_list[serial]['model'] = model
+
+        # MAC address
+        mac = device.get('mac')
+        if mac:
+            the_list[serial]['mac'] = mac
+
+        # Network: prefer to report the network name when possible
+        network_id = None
+        if isinstance(device.get('network'), dict):
+            network_id = device['network'].get('id')
+        network_id = network_id or device.get('networkId') or device.get('network_id')
+        if network_id:
+            network_name = networks_map.get(network_id) if networks_map else None
+            the_list[serial]['networkName'] = network_name if network_name is not None else network_id
+
+        # Status
+        status = device.get('status')
+        if status:
+            the_list[serial]['status'] = status
+
+        # IP-related fields: only set if present in the device object
+        for ip_key in ('wan1Ip', 'wan2Ip', 'lanIp', 'publicIp'):
+            if ip_key in device and device.get(ip_key) not in (None, ''):
+                the_list[serial][ip_key] = device.get(ip_key)
+
+        # usingCellularFailover may be present on some device types/endpoints
+        if 'usingCellularFailover' in device:
+            the_list[serial]['usingCellularFailover'] = device.get('usingCellularFailover')
 
     for device in devicesdtatuses:
         try:
@@ -130,8 +173,69 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        # Root HTML page listing organizations with links
+        if self.path == "/":
+            dashboard = meraki.DashboardAPI(API_KEY, output_log=False, print_console=True, maximum_retries=20, caller="promethusExporter theHolm")
+            try:
+                orgs = dashboard.organizations.getOrganizations()
+            except meraki.exceptions.APIError:
+                orgs = []
 
-        if "/?target=" not in self.path and "/organizations" not in self.path:
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html; charset=utf-8')
+            self.end_headers()
+
+            html = [
+                "<!DOCTYPE html>",
+                "<html>",
+                "<head>",
+                "  <meta charset='utf-8'>",
+                "  <title>Meraki Organizations</title>",
+                "  <style>",
+                "    body{font-family:Arial,Helvetica,sans-serif;margin:0;background:#f6f8fa;color:#24292f;}",
+                "    header{background:#24292f;color:#fff;padding:16px 24px;}",
+                "    header h1{margin:0;font-size:20px;}",
+                "    header p{margin:4px 0 0;font-size:13px;color:#d1d5da;}",
+                "    main{padding:20px 24px;}",
+                "    footer{margin-top:32px;padding:12px 24px;font-size:12px;color:#586069;border-top:1px solid #e1e4e8;background:#fafbfc;}",
+                "    table{border-collapse:collapse;width:100%;max-width:960px;background:#fff;border:1px solid #e1e4e8;box-shadow:0 1px 2px rgba(0,0,0,0.03);}",
+                "    th,td{border-bottom:1px solid #e1e4e8;padding:8px 10px;font-size:13px;text-align:left;}",
+                "    th{background:#f6f8fa;font-weight:600;}",
+                "    tr:nth-child(even){background:#fafbfc;}",
+                "    a{color:#0366d6;text-decoration:none;}",
+                "    a:hover{text-decoration:underline;}",
+                "  </style>",
+                "</head>",
+                "<body>",
+                "  <header>",
+                "    <h1>Meraki Organizations</h1>",
+                "    <p>Select an organization below to view Prometheus metrics for its devices.</p>",
+                "  </header>",
+                "  <main>",
+                "    <table>",
+                "      <tr><th>Name</th><th>ID</th><th>Link</th></tr>",
+            ]
+
+            for org in orgs:
+                org_id = org.get('id', '')
+                org_name = org.get('name', org_id)
+                link = f"/?target={org_id}"
+                html.append(f"      <tr><td>{org_name}</td><td>{org_id}</td><td><a href='{link}'>{link}</a></td></tr>")
+
+            html.extend([
+                "    </table>",
+                "  </main>",
+                "  <footer>",
+                "    Meraki Dashboard Prometheus Exporter &mdash; scrape metrics from <code>/?target=&lt;org_id&gt;</code>.",
+                "  </footer>",
+                "</body>",
+                "</html>",
+            ])
+
+            self.wfile.write("\n".join(html).encode('utf-8'))
+            return()
+
+        if "/?target=" not in self.path and "/organizations" not in self.path and self.path != "/":
             self._set_headers_404()
             return()
 
@@ -189,49 +293,58 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 # TYPE meraki_vpn_third_party_peers gauge
 # UNIT meraki_vpn_third_party_peers count
 """
+        # helper to escape label values for Prometheus exposition format
+        def _esc(val):
+            if val is None:
+                return 'None'
+            s = str(val)
+            s = s.replace('\\', '\\\\')
+            s = s.replace('"', '\\"')
+            return s
+
         for host in host_stats.keys():
-            # The getOrganizationDevicesUplinksLossAndLatency can return devices with no serial numbers. Issue #5
-            if host != None:
-                try:
-                    target = '{serial="' + host + \
-                             '",name="' + (host_stats[host]['name'] if host_stats[host]['name'] != "" else host_stats[host]['mac'] ) + \
-                             '",networkId="' + host_stats[host]['networkId'] + \
-                             '",orgName="' + host_stats[host]['orgName'] + \
-                             '",orgId="' + organizationId + \
-                             '"'
-                except KeyError:
-                    break
-                try:
-                    if host_stats[host]['latencyMs'] is not None:
-                        responce += 'meraki_device_latency' + target + '} ' + str(host_stats[host]['latencyMs']/1000) + '\n'
-                    if host_stats[host]['lossPercent'] is not None:
-                        responce += 'meraki_device_loss_percent' + target + '} ' + str(host_stats[host]['lossPercent']) + '\n'
-                except KeyError:
-                    pass
-                try:
-                    responce += 'meraki_device_status' + target + '} ' + ('1' if host_stats[host]['status'] == 'online' else '0') + '\n'
-                except KeyError:
-                    pass
-                try:
-                    responce += 'meraki_device_using_cellular_failover' + target + '} ' + ('1' if host_stats[host]['usingCellularFailover'] else '0') + '\n'
-                except KeyError:
-                    pass
-                if 'uplinks' in host_stats[host]:
-                    for uplink in host_stats[host]['uplinks'].keys():
-                        responce += 'meraki_device_uplink_status' + target + ',uplink="' + uplink + '"} ' + str(uplink_statuses[host_stats[host]['uplinks'][uplink]]) + '\n'
-                if 'vpnMode' in host_stats[host]:
-                    responce += 'meraki_vpn_mode' + target + '} ' + ('1' if host_stats[host]['vpnMode'] == 'hub' else '0') + '\n'
-                if 'exportedSubnets' in host_stats[host]:
-                    for subnet in host_stats[host]['exportedSubnets']:
-                        responce += 'meraki_vpn_exported_subnets' + target + ',subnet="' + subnet + '"} 1\n'
-                if 'merakiVpnPeers' in host_stats[host]:
-                    for peer in host_stats[host]['merakiVpnPeers']:
-                        reachability_value = '1' if peer['reachability'] == 'reachable' else '0'
-                        responce += 'meraki_vpn_meraki_peers' + target + ',peer_networkId="' + peer['networkId'] + '",peer_networkName="' + peer['networkName'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
-                if 'thirdPartyVpnPeers' in host_stats[host]:
-                    for peer in host_stats[host]['thirdPartyVpnPeers']:
-                        reachability_value = '1' if peer['reachability'] == 'reachable' else '0'
-                        responce += 'meraki_vpn_third_party_peers' + target + ',peer_name="' + peer['name'] + '",peer_publicIp="' + peer['publicIp'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
+            # The getOrganizationDevicesUplinksLossAndLatency can return devices with no serial numbers.
+            if host is None:
+                continue
+
+            hs = host_stats.get(host, {}) if isinstance(host_stats, dict) else {}
+
+            name_label = hs.get('name') or hs.get('mac') or host
+            network_name_label = hs.get('networkName') if isinstance(hs.get('networkName'), str) else (hs.get('networkId') if hs.get('networkId') else 'None')
+            orgname_label = hs.get('orgName', 'None')
+
+            target = '{serial="' + _esc(host) + '",name="' + _esc(name_label) + '",networkName="' + _esc(network_name_label) + '",orgName="' + _esc(orgname_label) + '",orgId="' + _esc(organizationId) + '"'
+            try:
+                if host_stats[host]['latencyMs'] is not None:
+                    responce += 'meraki_device_latency' + target + '} ' + str(host_stats[host]['latencyMs']/1000) + '\n'
+                if host_stats[host]['lossPercent'] is not None:
+                    responce += 'meraki_device_loss_percent' + target + '} ' + str(host_stats[host]['lossPercent']) + '\n'
+            except KeyError:
+                pass
+            try:
+                responce += 'meraki_device_status' + target + '} ' + ('1' if host_stats[host]['status'] == 'online' else '0') + '\n'
+            except KeyError:
+                pass
+            try:
+                responce += 'meraki_device_using_cellular_failover' + target + '} ' + ('1' if host_stats[host]['usingCellularFailover'] else '0') + '\n'
+            except KeyError:
+                pass
+            if 'uplinks' in host_stats[host]:
+                for uplink in host_stats[host]['uplinks'].keys():
+                    responce += 'meraki_device_uplink_status' + target + ',uplink="' + uplink + '"} ' + str(uplink_statuses[host_stats[host]['uplinks'][uplink]]) + '\n'
+            if 'vpnMode' in host_stats[host]:
+                responce += 'meraki_vpn_mode' + target + '} ' + ('1' if host_stats[host]['vpnMode'] == 'hub' else '0') + '\n'
+            if 'exportedSubnets' in host_stats[host]:
+                for subnet in host_stats[host]['exportedSubnets']:
+                    responce += 'meraki_vpn_exported_subnets' + target + ',subnet="' + subnet + '"} 1\n'
+            if 'merakiVpnPeers' in host_stats[host]:
+                for peer in host_stats[host]['merakiVpnPeers']:
+                    reachability_value = '1' if peer['reachability'] == 'reachable' else '0'
+                    responce += 'meraki_vpn_meraki_peers' + target + ',peer_networkId="' + peer['networkId'] + '",peer_networkName="' + peer['networkName'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
+            if 'thirdPartyVpnPeers' in host_stats[host]:
+                for peer in host_stats[host]['thirdPartyVpnPeers']:
+                    reachability_value = '1' if peer['reachability'] == 'reachable' else '0'
+                    responce += 'meraki_vpn_third_party_peers' + target + ',peer_name="' + peer['name'] + '",peer_publicIp="' + peer['publicIp'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
 
         responce += '# TYPE request_processing_seconds summary\n'
         responce += 'request_processing_seconds ' + str(time.monotonic() - start_time) + '\n'
