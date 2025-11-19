@@ -11,26 +11,45 @@ def get_devices(devices, dashboard, organizationId):
     print('Got', len(devices), 'Devices')
 
 
-def get_device_statuses(devicesdtatuses, dashboard, organizationId):
-    devicesdtatuses.extend(dashboard.organizations.getOrganizationDevicesUplinksLossAndLatency(organizationId=organizationId, ip='8.8.8.8', timespan="120", total_pages="all"))
-    print('Got ', len(devicesdtatuses), 'Device Statuses')
+def get_device_statuses(devicesStatuses, dashboard, organizationId):
+    devicesStatuses.extend(dashboard.organizations.getOrganizationDevicesUplinksLossAndLatency(organizationId=organizationId, ip='8.8.8.8', timespan="120", total_pages="all"))
+    print('Got ', len(devicesStatuses), 'Device Statuses')
 
 
-def get_uplink_statuses(uplinkstatuses, dashboard, organizationId):
-    uplinkstatuses.extend(dashboard.appliance.getOrganizationApplianceUplinkStatuses(organizationId=organizationId, total_pages="all"))
-    print('Got ', len(uplinkstatuses), 'Uplink Statuses')
+def get_uplink_statuses(uplinkStatuses, dashboard, organizationId):
+    uplinkStatuses.extend(dashboard.appliance.getOrganizationApplianceUplinkStatuses(organizationId=organizationId, total_pages="all"))
+    print('Got ', len(uplinkStatuses), 'Uplink Statuses')
+
+def is_uplink_port(port_id, serial=None, port_tags_map=None):
+    """
+    Identify if a port is an uplink port based on tags only.
+    
+    Args:
+        port_id: The port ID/number
+        serial: Device serial number (required for tag lookup)
+        port_tags_map: Dict mapping {serial: {portId: [tags]}} (required)
+    
+    Returns:
+        bool: True if port has 'uplink' tag
+    """
+    # Check if port is tagged with 'uplink'
+    if port_tags_map and serial and serial in port_tags_map:
+        port_tags = port_tags_map[serial].get(str(port_id), [])
+        if 'uplink' in port_tags:
+            return True
+    
+    return False
+
+def get_vpn_statuses(vpnStatuses, dashboard, organizationId):
+    vpnStatuses.extend(dashboard.appliance.getOrganizationApplianceVpnStatuses(organizationId=organizationId, total_pages="all"))
+    print('Got ', len(vpnStatuses), 'VPN Statuses')
 
 
-def get_vpn_statuses(vpnstatuses, dashboard, organizationId):
-    vpnstatuses.extend(dashboard.appliance.getOrganizationApplianceVpnStatuses(organizationId=organizationId, total_pages="all"))
-    print('Got ', len(vpnstatuses), 'VPN Statuses')
+def get_organization(orgData, dashboard, organizationId):
+    orgData.update(dashboard.organizations.getOrganization(organizationId=organizationId))
 
 
-def get_organizarion(org_data, dashboard, organizationId):
-    org_data.update(dashboard.organizations.getOrganization(organizationId=organizationId))
-
-
-def get_organizarions(orgs_list, dashboard):
+def get_organizations(orgs_list, dashboard):
     response = dashboard.organizations.getOrganizations()
     for org in response:  # If you know better way to check that API key has access to an Org, please let me know. (This will rate throtled big time )
         try:
@@ -39,28 +58,129 @@ def get_organizarions(orgs_list, dashboard):
         except meraki.exceptions.APIError:
             pass
 
+def get_switch_ports_usage(switchPortsUsage, dashboard, organizationId):
+    # For Prometheus scraping, we need recent data
+    # Note: Meraki's interval data may not be available for very short timespans
+    # Using 2 hours as a balance between freshness and data availability
+    timespan = 7200  # 2 hours in seconds
+    
+    print(f"Fetching switch port usage history for org {organizationId}...")
+    print(f"   Timespan: {timespan} seconds ({timespan/3600} hours)")
+    
+    try:
+        response = dashboard.switch.getOrganizationSwitchPortsUsageHistoryByDeviceByInterval(
+            organizationId=organizationId,
+            timespan=timespan,
+            total_pages="all"
+        )
+        
+        if isinstance(response, dict) and 'items' in response:
+            # Process all devices - we'll filter ports later
+            all_devices = response['items']
+            print(f"   Raw response: {len(all_devices)} devices returned")
+            
+            for device in all_devices:
+                # Check if device has any port data
+                ports = device.get('ports', [])
+                if ports:
+                    # Check if any port has interval data
+                    has_data = any(port.get('intervals') for port in ports)
+                    if has_data:
+                        switchPortsUsage.append(device)
+            
+            print('Got', len(switchPortsUsage), 'devices with port data')
+            print('Meta info:', response.get('meta'))
+        else:
+            switchPortsUsage.extend(response)
+            print('Got', len(response), 'records')
+    except Exception as e:
+        print(f"Error fetching switch port usage: {e}")
+        raise
+    
+def get_switch_ports_tags_map(portTagsMap, dashboard, organizationId):
+    """
+    Fetch port configuration (including tags) for all switches in the organization.
+    Uses the efficient organization-wide API call.
+    Returns a dict: {serial: {portId: [tags]}}
+    """
+    import time
+    
+    print(f"Fetching port tags for organization {organizationId}...")
+    start_time = time.time()
+    
+    try:
+        # Get all switch ports for the organization in one API call
+        response = dashboard.switch.getOrganizationSwitchPortsBySwitch(
+            organizationId=organizationId,
+            total_pages="all"
+        )
+        
+        # Response is a dict with 'items' and 'meta' when using total_pages="all"
+        if isinstance(response, dict) and 'items' in response:
+            switches_data = response['items']
+        else:
+            switches_data = response
+        
+        # Build the port tags map
+        for switch in switches_data:
+            serial = switch.get('serial')
+            if not serial:
+                continue
+            
+            portTagsMap[serial] = {}
+            ports = switch.get('ports', [])
+            
+            for port in ports:
+                port_id = str(port.get('portId', ''))
+                tags = port.get('tags', [])
+                if tags:
+                    portTagsMap[serial][port_id] = tags
+        
+        elapsed = time.time() - start_time
+        print(f"   Fetched port tags in {elapsed:.1f}s")
+        
+        # Count uplink ports
+        uplink_count = sum(
+            1 for serial_tags in portTagsMap.values()
+            for tags in serial_tags.values()
+            if 'uplink' in tags
+        )
+        print(f"   Found {uplink_count} ports tagged with 'uplink' across {len(portTagsMap)} switches")
+        
+    except Exception as e:
+        print(f"   Error fetching organization ports: {e}")
+        raise
+
 
 def get_usage(dashboard, organizationId):
     devices = []
     t1 = threading.Thread(target=get_devices, args=(devices, dashboard, organizationId))
     t1.start()
 
-    devicesdtatuses = []
-    t2 = threading.Thread(target=get_device_statuses, args=(devicesdtatuses, dashboard, organizationId))
+    devicesStatuses = []
+    t2 = threading.Thread(target=get_device_statuses, args=(devicesStatuses, dashboard, organizationId))
     t2.start()
 
-    uplinkstatuses = []
-    t3 = threading.Thread(target=get_uplink_statuses, args=(uplinkstatuses, dashboard, organizationId))
+    uplinkStatuses = []
+    t3 = threading.Thread(target=get_uplink_statuses, args=(uplinkStatuses, dashboard, organizationId))
     t3.start()
 
     if 'vpn' in COLLECT_EXTRA:
-        vpnstatuses = []
-        t4 = threading.Thread(target=get_vpn_statuses, args=(vpnstatuses, dashboard, organizationId))
+        vpnStatuses = []
+        t4 = threading.Thread(target=get_vpn_statuses, args=(vpnStatuses, dashboard, organizationId))
         t4.start()
 
-    org_data = {}
-    t5 = threading.Thread(target=get_organizarion, args=(org_data, dashboard, organizationId))
+    orgData = {}
+    t5 = threading.Thread(target=get_organization, args=(orgData, dashboard, organizationId))
     t5.start()
+    
+    switchPortsUsage =[]
+    t6 = threading.Thread(target=get_switch_ports_usage, args=(switchPortsUsage, dashboard, organizationId))
+    t6.start()
+    
+    portTagsMap = {}
+    t7 = threading.Thread(target=get_switch_ports_tags_map, args=(portTagsMap, dashboard, organizationId))
+    t7.start()
 
     t1.join()
     t2.join()
@@ -68,6 +188,9 @@ def get_usage(dashboard, organizationId):
     if 'vpn' in COLLECT_EXTRA:
         t4.join()
     t5.join()
+    t6.join()
+    t7.join()
+    
     # Fetch networks for this organization so we can report network names instead of IDs
     try:
         networks = dashboard.organizations.getOrganizationNetworks(organizationId=organizationId, total_pages="all")
@@ -86,10 +209,10 @@ def get_usage(dashboard, organizationId):
             continue
 
         the_list[serial] = {}
-        the_list[serial]['orgName'] = org_data.get('name', '')
+        the_list[serial]['orgName'] = orgData.get('name', '')
 
         # Name: prefer explicit name, fall back to MAC when name empty
-        name = device.get('name') or device.get('displayName') or device.get('mac') or ''
+        name = device.get('name') or device.get('displayName') or device.get('mac') or serial
         if name:
             the_list[serial]['name'] = name
 
@@ -126,18 +249,18 @@ def get_usage(dashboard, organizationId):
         if 'usingCellularFailover' in device:
             the_list[serial]['usingCellularFailover'] = device.get('usingCellularFailover')
 
-    for device in devicesdtatuses:
+    for device in devicesStatuses:
         try:
-            the_list[device['serial']]  # should give me KeyError if devices was not picket up by previous search.
+            the_list[device['serial']]  # should give me KeyError if devices was not picked up by previous search.
         except KeyError:
             the_list[device['serial']] = {"missing data": True}
 
         the_list[device['serial']]['latencyMs'] = device['timeSeries'][-1]['latencyMs']
         the_list[device['serial']]['lossPercent'] = device['timeSeries'][-1]['lossPercent']
 
-    for device in uplinkstatuses:
+    for device in uplinkStatuses:
         try:
-            the_list[device['serial']]  # should give me KeyError if devices was not picket up by previous search.
+            the_list[device['serial']]  # should give me KeyError if devices was not picked up by previous search.
         except KeyError:
             the_list[device['serial']] = {"missing data": True}
         the_list[device['serial']]['uplinks'] = {}
@@ -145,7 +268,7 @@ def get_usage(dashboard, organizationId):
             the_list[device['serial']]['uplinks'][uplink['interface']] = uplink['status']
 
     if 'vpn' in COLLECT_EXTRA:
-        for vpn in vpnstatuses:
+        for vpn in vpnStatuses:
             try:
                 the_list[vpn['deviceSerial']]
             except KeyError:
@@ -156,6 +279,41 @@ def get_usage(dashboard, organizationId):
             the_list[vpn['deviceSerial']]['merakiVpnPeers'] = vpn['merakiVpnPeers']
             the_list[vpn['deviceSerial']]['thirdPartyVpnPeers'] = vpn['thirdPartyVpnPeers']
 
+    for device in switchPortsUsage:
+        try:
+            the_list[device['serial']]  # should give me KeyError if devices was not picked up by previous search.
+        except KeyError:
+            the_list[device['serial']] = {"missing data": True}
+        for port in device.get('ports', []):
+            port_id = str(port.get('portId', ''))
+            # Only consider ports that have interval data
+            if not port.get('intervals'):
+                continue
+            
+            # Check if this port is an uplink port based on tags
+            if not is_uplink_port(port_id, serial=device['serial'], port_tags_map=portTagsMap):
+                continue  # Keep only uplink ports
+            
+            latest_interval = port['intervals'][-1]  # Get the most recent interval data
+            
+            # Initialize usage and bandwidth dicts if not already present
+            if 'switchPortUsage' not in the_list[device['serial']]:
+                the_list[device['serial']]['switchPortUsage'] = {}
+            if port_id not in the_list[device['serial']]['switchPortUsage']:
+                the_list[device['serial']]['switchPortUsage'][port_id] = {}
+            
+            # Total bytes
+            data_usage = latest_interval.get('data', {}).get('usage', {})
+            the_list[device['serial']]['switchPortUsage'][port_id]['UsageTotalBytes'] = data_usage.get('total', 0)
+            the_list[device['serial']]['switchPortUsage'][port_id]['UsageUpstreamBytes'] = data_usage.get('upstream', 0)
+            the_list[device['serial']]['switchPortUsage'][port_id]['UsageDownstreamBytes'] = data_usage.get('downstream', 0)
+            
+            # Bandwidth in kbps
+            bandwidth = latest_interval.get('bandwidth', {}).get('usage', {})
+            the_list[device['serial']]['switchPortUsage'][port_id]['bandwidthTotalKbps'] = bandwidth.get('total', 0)
+            the_list[device['serial']]['switchPortUsage'][port_id]['bandwidthUpstreamKbps'] = bandwidth.get('upstream', 0)
+            the_list[device['serial']]['switchPortUsage'][port_id]['bandwidthDownstreamKbps'] = bandwidth.get('downstream', 0)
+    
     print('Done')
     return(the_list)
 # end of get_usage()
@@ -244,9 +402,9 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 
         if "/organizations" in self.path:   # Generating list of avialable organizations for API keys.
             org_list = list()
-            get_organizarions(org_list, dashboard)
-            responce = "- targets:\n   - " + "\n   - ".join(org_list)
-            self.wfile.write(responce.encode('utf-8'))
+            get_organizations(org_list, dashboard)
+            response = "- targets:\n   - " + "\n   - ".join(org_list)
+            self.wfile.write(response.encode('utf-8'))
             self.wfile.write("\n".encode('utf-8'))
             return
 
@@ -261,7 +419,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 
         uplink_statuses = {'active': 0, 'ready': 1, 'connecting': 2, 'not connected': 3, 'failed': 4}
 
-        responce = """
+        response = """
 # HELP meraki_device_latency The latency of the Meraki device in milliseconds
 # TYPE meraki_device_latency gauge
 # UNIT meraki_device_latency milliseconds
@@ -277,9 +435,21 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 # HELP meraki_device_using_cellular_failover Whether the Meraki device is using cellular failover (1 for true, 0 for false)
 # TYPE meraki_device_using_cellular_failover gauge
 # UNIT meraki_device_using_cellular_failover boolean
+# HELP meraki_switch_port_usage_total_bytes Total data usage on switch port in bytes
+# TYPE meraki_switch_port_usage_total_bytes gauge
+# HELP meraki_switch_port_usage_upstream_bytes Upstream data usage on switch port in bytes
+# TYPE meraki_switch_port_usage_upstream_bytes gauge
+# HELP meraki_switch_port_usage_downstream_bytes Downstream data usage on switch port in bytes
+# TYPE meraki_switch_port_usage_downstream_bytes gauge
+# HELP meraki_switch_port_bandwidth_total_kbps Total bandwidth usage on switch port in kbps
+# TYPE meraki_switch_port_bandwidth_total_kbps gauge
+# HELP meraki_switch_port_bandwidth_upstream_kbps Upstream bandwidth usage on switch port in kbps
+# TYPE meraki_switch_port_bandwidth_upstream_kbps gauge
+# HELP meraki_switch_port_bandwidth_downstream_kbps Downstream bandwidth usage on switch port in kbps
+# TYPE meraki_switch_port_bandwidth_downstream_kbps gauge
 """
         if 'vpn' in COLLECT_EXTRA:
-            responce +="""
+            response +="""
 # HELP meraki_vpn_mode The VPN mode of the Meraki device (1 for hub, 0 for spoke)
 # TYPE meraki_vpn_mode gauge
 # UNIT meraki_vpn_mode boolean
@@ -316,40 +486,54 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
             target = '{serial="' + _esc(host) + '",name="' + _esc(name_label) + '",networkName="' + _esc(network_name_label) + '",orgName="' + _esc(orgname_label) + '",orgId="' + _esc(organizationId) + '"'
             try:
                 if host_stats[host]['latencyMs'] is not None:
-                    responce += 'meraki_device_latency' + target + '} ' + str(host_stats[host]['latencyMs']/1000) + '\n'
+                    response += 'meraki_device_latency' + target + '} ' + str(host_stats[host]['latencyMs']/1000) + '\n'
                 if host_stats[host]['lossPercent'] is not None:
-                    responce += 'meraki_device_loss_percent' + target + '} ' + str(host_stats[host]['lossPercent']) + '\n'
+                    response += 'meraki_device_loss_percent' + target + '} ' + str(host_stats[host]['lossPercent']) + '\n'
             except KeyError:
                 pass
             try:
-                responce += 'meraki_device_status' + target + '} ' + ('1' if host_stats[host]['status'] == 'online' else '0') + '\n'
+                response += 'meraki_device_status' + target + '} ' + ('1' if host_stats[host]['status'] == 'online' else '0') + '\n'
             except KeyError:
                 pass
             try:
-                responce += 'meraki_device_using_cellular_failover' + target + '} ' + ('1' if host_stats[host]['usingCellularFailover'] else '0') + '\n'
+                response += 'meraki_device_using_cellular_failover' + target + '} ' + ('1' if host_stats[host]['usingCellularFailover'] else '0') + '\n'
             except KeyError:
                 pass
             if 'uplinks' in host_stats[host]:
                 for uplink in host_stats[host]['uplinks'].keys():
-                    responce += 'meraki_device_uplink_status' + target + ',uplink="' + uplink + '"} ' + str(uplink_statuses[host_stats[host]['uplinks'][uplink]]) + '\n'
+                    response += 'meraki_device_uplink_status' + target + ',uplink="' + uplink + '"} ' + str(uplink_statuses[host_stats[host]['uplinks'][uplink]]) + '\n'
             if 'vpnMode' in host_stats[host]:
-                responce += 'meraki_vpn_mode' + target + '} ' + ('1' if host_stats[host]['vpnMode'] == 'hub' else '0') + '\n'
+                response += 'meraki_vpn_mode' + target + '} ' + ('1' if host_stats[host]['vpnMode'] == 'hub' else '0') + '\n'
             if 'exportedSubnets' in host_stats[host]:
                 for subnet in host_stats[host]['exportedSubnets']:
-                    responce += 'meraki_vpn_exported_subnets' + target + ',subnet="' + subnet + '"} 1\n'
+                    response += 'meraki_vpn_exported_subnets' + target + ',subnet="' + subnet + '"} 1\n'
             if 'merakiVpnPeers' in host_stats[host]:
                 for peer in host_stats[host]['merakiVpnPeers']:
                     reachability_value = '1' if peer['reachability'] == 'reachable' else '0'
-                    responce += 'meraki_vpn_meraki_peers' + target + ',peer_networkId="' + peer['networkId'] + '",peer_networkName="' + peer['networkName'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
+                    response += 'meraki_vpn_meraki_peers' + target + ',peer_networkId="' + peer['networkId'] + '",peer_networkName="' + peer['networkName'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
             if 'thirdPartyVpnPeers' in host_stats[host]:
                 for peer in host_stats[host]['thirdPartyVpnPeers']:
                     reachability_value = '1' if peer['reachability'] == 'reachable' else '0'
-                    responce += 'meraki_vpn_third_party_peers' + target + ',peer_name="' + peer['name'] + '",peer_publicIp="' + peer['publicIp'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
+                    response += 'meraki_vpn_third_party_peers' + target + ',peer_name="' + peer['name'] + '",peer_publicIp="' + peer['publicIp'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
+            if 'switchPortUsage' in host_stats[host]:
+                for port_id, usage_data in host_stats[host]['switchPortUsage'].items():
+                    if 'UsageTotalBytes' in usage_data:
+                        response += 'meraki_switch_port_usage_total_bytes' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['UsageTotalBytes']*1024) + '\n'
+                    if 'UsageUpstreamBytes' in usage_data:
+                        response += 'meraki_switch_port_usage_upstream_bytes' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['UsageUpstreamBytes']*1024) + '\n'
+                    if 'UsageDownstreamBytes' in usage_data:
+                        response += 'meraki_switch_port_usage_downstream_bytes' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['UsageDownstreamBytes']*1024) + '\n'
+                    if 'bandwidthTotalKbps' in usage_data:
+                        response += 'meraki_switch_port_bandwidth_total_kbps' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['bandwidthTotalKbps']) + '\n'
+                    if 'bandwidthUpstreamKbps' in usage_data:
+                        response += 'meraki_switch_port_bandwidth_upstream_kbps' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['bandwidthUpstreamKbps']) + '\n'
+                    if 'bandwidthDownstreamKbps' in usage_data:
+                        response += 'meraki_switch_port_bandwidth_downstream_kbps' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['bandwidthDownstreamKbps']) + '\n'
 
-        responce += '# TYPE request_processing_seconds summary\n'
-        responce += 'request_processing_seconds ' + str(time.monotonic() - start_time) + '\n'
+        response += '# TYPE request_processing_seconds summary\n'
+        response += 'request_processing_seconds ' + str(time.monotonic() - start_time) + '\n'
 
-        self.wfile.write(responce.encode('utf-8'))
+        self.wfile.write(response.encode('utf-8'))
 
     def do_HEAD(self):
         self._set_headers()
