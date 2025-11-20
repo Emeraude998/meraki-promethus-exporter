@@ -6,19 +6,58 @@ import configargparse
 import meraki
 
 
-def get_devices(devices, dashboard, organizationId):
-    devices.extend(dashboard.organizations.getOrganizationDevicesAvailabilities(organizationId=organizationId, total_pages="all"))
+def get_devices(devices, dashboard, organization_id):
+    """
+    Fetch all devices in the organization.
+    
+    Args:
+        devices: List to append device data to
+        dashboard: Meraki DashboardAPI instance
+        organization_id: ID of the organization to fetch devices for
+    
+    Returns:
+        List of devices in the organization
+    """
+    devices.extend(dashboard.organizations.getOrganizationDevicesAvailabilities(
+        organizationId=organization_id,
+        total_pages="all"))
     print('Got', len(devices), 'Devices')
 
+def get_device_statuses(devices_statuses, dashboard, organization_id):
+    """
+    Fetch all device statuses in the organization.
+    
+    Args:
+        devices_statuses: List to append device status data to
+        dashboard: Meraki DashboardAPI instance
+        organization_id: ID of the organization to fetch device statuses for
+    
+    Returns:
+        List of device statuses in the organization
+    """
+    devices_statuses.extend(dashboard.organizations.getOrganizationDevicesUplinksLossAndLatency(
+        organizationId=organization_id,
+        ip='8.8.8.8',
+        timespan="120",
+        total_pages="all"))
+    print('Got ', len(devices_statuses), 'Device Statuses')
 
-def get_device_statuses(devicesStatuses, dashboard, organizationId):
-    devicesStatuses.extend(dashboard.organizations.getOrganizationDevicesUplinksLossAndLatency(organizationId=organizationId, ip='8.8.8.8', timespan="120", total_pages="all"))
-    print('Got ', len(devicesStatuses), 'Device Statuses')
-
-
-def get_uplink_statuses(uplinkStatuses, dashboard, organizationId):
-    uplinkStatuses.extend(dashboard.appliance.getOrganizationApplianceUplinkStatuses(organizationId=organizationId, total_pages="all"))
-    print('Got ', len(uplinkStatuses), 'Uplink Statuses')
+def get_uplink_statuses(uplink_statuses, dashboard, organization_id):
+    """
+    Fetch all uplink statuses in the organization.
+    
+    Args:
+        uplink_statuses: List to append uplink status data to
+        dashboard: Meraki DashboardAPI instance
+        organization_id: ID of the organization to fetch uplink statuses for
+    
+    Returns:
+        List of uplink statuses in the organization
+    """
+    uplink_statuses.extend(dashboard.appliance.getOrganizationApplianceUplinkStatuses(
+        organizationId=organization_id,
+        total_pages="all"))
+    print('Got ', len(uplink_statuses), 'Uplink Statuses')
 
 def is_uplink_port(port_id, serial=None, port_tags_map=None):
     """
@@ -37,19 +76,71 @@ def is_uplink_port(port_id, serial=None, port_tags_map=None):
         port_tags = port_tags_map[serial].get(str(port_id), [])
         if 'uplink' in port_tags:
             return True
-    
+
     return False
 
-def get_vpn_statuses(vpnStatuses, dashboard, organizationId):
-    vpnStatuses.extend(dashboard.appliance.getOrganizationApplianceVpnStatuses(organizationId=organizationId, total_pages="all"))
-    print('Got ', len(vpnStatuses), 'VPN Statuses')
+def is_ap_device(port_id, serial=None, port_discovery_map=None):
+    """
+    Identify if a port is an access point port based on topology discovery.
+    
+    Args:
+        port_id: The port ID/number
+        serial: Device serial number of the switch (required)
+        port_discovery_map: Dict mapping {serial: {portId: lldp_info}} (required)
+    
+    Returns:
+        bool: True if device is an access point
+        str: The device name if it is an access point, else None
+    """
+    if port_discovery_map and serial and (serial in port_discovery_map):
+        port_info = port_discovery_map[serial].get(str(port_id), {})
+        if port_info.get('device_type') == 'MR':
+            return True, port_info.get('device_name', 'N/A')
 
+    return False, None
 
-def get_organization(orgData, dashboard, organizationId):
-    orgData.update(dashboard.organizations.getOrganization(organizationId=organizationId))
+def get_vpn_statuses(vpn_statuses, dashboard, organization_id):
+    """
+    Fetch all VPN statuses in the organization.
+    
+    Args:
+        vpn_statuses: List to append VPN status data to
+        dashboard: Meraki DashboardAPI instance
+        organization_id: ID of the organization to fetch VPN statuses for
+    
+    Returns:
+        List of VPN statuses in the organization
+    """
+    vpn_statuses.extend(dashboard.appliance.getOrganizationApplianceVpnStatuses(
+        organizationId=organization_id,
+        total_pages="all"))
+    print('Got ', len(vpn_statuses), 'VPN Statuses')
 
+def get_organization(org_data, dashboard, organization_id):
+    """
+    Fetch organization details.
+    
+    Args:
+        org_data: Dict to update with organization data
+        dashboard: Meraki DashboardAPI instance
+        organization_id: ID of the organization to fetch details for
+    
+    Returns:
+        Dict with organization details
+    """
+    org_data.update(dashboard.organizations.getOrganization(organizationId=organization_id))
 
 def get_organizations(orgs_list, dashboard):
+    """
+    Fetch all organizations accessible by the API key.
+    
+    Args:
+        orgs_list: List to append organization IDs to
+        dashboard: Meraki DashboardAPI instance
+    
+    Returns:
+        List of organization IDs accessible by the API key
+    """
     response = dashboard.organizations.getOrganizations()
     for org in response:  # If you know better way to check that API key has access to an Org, please let me know. (This will rate throtled big time )
         try:
@@ -58,27 +149,38 @@ def get_organizations(orgs_list, dashboard):
         except meraki.exceptions.APIError:
             pass
 
-def get_switch_ports_usage(switchPortsUsage, dashboard, organizationId):
-    # For Prometheus scraping, we need recent data
-    # Note: Meraki's interval data may not be available for very short timespans
-    # Using 2 hours as a balance between freshness and data availability
+def get_switch_ports_usage(switch_ports_usage, dashboard, organization_id):
+    """
+    Fetch switch port usage history for the organization.
+    For Prometheus scraping, we need recent data
+    Note: Meraki's interval data may not be available for very short timespans
+    Using 2 hours as a balance between freshness and data availability
+
+    Args:
+        switch_ports_usage: List to append switch port usage data to
+        dashboard: Meraki DashboardAPI instance
+        organization_id: ID of the organization to fetch switch port usage for
+
+    Returns:
+        List of devices with switch port usage data
+    """
     timespan = 7200  # 2 hours in seconds
-    
-    print(f"Fetching switch port usage history for org {organizationId}...")
+
+    print(f"Fetching switch port usage history for org {organization_id}...")
     print(f"   Timespan: {timespan} seconds ({timespan/3600} hours)")
-    
+
     try:
         response = dashboard.switch.getOrganizationSwitchPortsUsageHistoryByDeviceByInterval(
-            organizationId=organizationId,
+            organizationId=organization_id,
             timespan=timespan,
             total_pages="all"
         )
-        
+
         if isinstance(response, dict) and 'items' in response:
             # Process all devices - we'll filter ports later
             all_devices = response['items']
             print(f"   Raw response: {len(all_devices)} devices returned")
-            
+
             for device in all_devices:
                 # Check if device has any port data
                 ports = device.get('ports', [])
@@ -86,123 +188,238 @@ def get_switch_ports_usage(switchPortsUsage, dashboard, organizationId):
                     # Check if any port has interval data
                     has_data = any(port.get('intervals') for port in ports)
                     if has_data:
-                        switchPortsUsage.append(device)
-            
-            print('Got', len(switchPortsUsage), 'devices with port data')
+                        switch_ports_usage.append(device)
+
+            print('Got', len(switch_ports_usage), 'devices with port data')
             print('Meta info:', response.get('meta'))
         else:
-            switchPortsUsage.extend(response)
+            switch_ports_usage.extend(response)
             print('Got', len(response), 'records')
     except Exception as e:
         print(f"Error fetching switch port usage: {e}")
         raise
-    
-def get_switch_ports_tags_map(portTagsMap, dashboard, organizationId):
+
+def get_switch_ports_tags_map(port_tags_map, dashboard, organization_id):
     """
     Fetch port configuration (including tags) for all switches in the organization.
-    Uses the efficient organization-wide API call.
-    Returns a dict: {serial: {portId: [tags]}}
+    
+    Args:
+        port_tags_map: Dict to update with port tags data
+        dashboard: Meraki DashboardAPI instance
+        organization_id: ID of the organization to fetch port tags for
+        
+    Returns:
+        dict: {serial: {portId: [tags]}}
     """
-    import time
-    
-    print(f"Fetching port tags for organization {organizationId}...")
-    start_time = time.time()
-    
-    try:
-        # Get all switch ports for the organization in one API call
-        response = dashboard.switch.getOrganizationSwitchPortsBySwitch(
-            organizationId=organizationId,
-            total_pages="all"
-        )
-        
-        # Response is a dict with 'items' and 'meta' when using total_pages="all"
-        if isinstance(response, dict) and 'items' in response:
-            switches_data = response['items']
-        else:
-            switches_data = response
-        
-        # Build the port tags map
-        for switch in switches_data:
-            serial = switch.get('serial')
-            if not serial:
-                continue
-            
-            portTagsMap[serial] = {}
-            ports = switch.get('ports', [])
-            
-            for port in ports:
-                port_id = str(port.get('portId', ''))
-                tags = port.get('tags', [])
-                if tags:
-                    portTagsMap[serial][port_id] = tags
-        
-        elapsed = time.time() - start_time
-        print(f"   Fetched port tags in {elapsed:.1f}s")
-        
-        # Count uplink ports
-        uplink_count = sum(
-            1 for serial_tags in portTagsMap.values()
-            for tags in serial_tags.values()
-            if 'uplink' in tags
-        )
-        print(f"   Found {uplink_count} ports tagged with 'uplink' across {len(portTagsMap)} switches")
-        
-    except Exception as e:
-        print(f"   Error fetching organization ports: {e}")
-        raise    
+    # Get all switch ports for the organization in one API call
+    response = dashboard.switch.getOrganizationSwitchPortsBySwitch(
+        organizationId=organization_id,
+        total_pages="all"
+    )
 
-def get_wireless_usage(wireless_usage, dashboard, organizationId):
-    # For Prometheus scraping, we need recent data
-    # Note: Meraki's interval data may not be available for very short timespans
-    # Using 2 hours as a balance between freshness and data availability
-    timespan = 7200  # 2 hours in seconds
-    wirelessDevices = dashboard.organizations.getOrganizationDevices(organizationId=organizationId, productTypes="wireless", total_pages="all")
-    for device in wirelessDevices:
-        if 'networkId' in device:
-            response = dashboard.wireless.getNetworkWirelessUsageHistory(networkId=device['networkId'], deviceSerial=device['serial'], timespan=timespan, total_pages="all")
-            if response:
-                for item in response:
-                    item['serial'] = device['serial']
-                wireless_usage.extend(response)
-    
+    # Response is a dict with 'items' and 'meta' when using total_pages="all"
+    if isinstance(response, dict) and 'items' in response:
+        switches_data = response['items']
+    else:
+        switches_data = response
 
-def get_usage(dashboard, organizationId):
+    # Build the port tags map
+    for switch in switches_data:
+        serial = switch.get('serial')
+        if not serial:
+            continue
+
+        port_tags_map[serial] = {}
+        ports = switch.get('ports', [])
+
+        for port in ports:
+            port_id = str(port.get('portId', ''))
+            tags = port.get('tags', [])
+            if tags:
+                port_tags_map[serial][port_id] = tags
+
+def get_switch_ports_topology_discovery(port_discovery_map, dashboard, organization_id):
+    """
+    List most recently seen LLDP/CDP discovery and topology information per switch port in an organization.
+    
+    Args:
+        port_discovery_map: Dict to update with topology discovery data
+        dashboard: Meraki DashboardAPI instance
+        organization_id: ID of the organization to fetch topology discovery for
+    
+    Returns:
+        List of topology discovery data per switch port
+    """
+    response = dashboard.switch.getOrganizationSwitchPortsTopologyDiscoveryByDevice(
+        organizationId=organization_id,
+        total_pages="all"
+    )
+    
+    # Response is a dict with 'items' and 'meta' when using total_pages="all"
+    print('Got', response['meta']['counts']['items']['total'], 'topology discovery records')
+    
+    if isinstance(response, dict) and 'items' in response:
+        topology_data = response['items']
+    else:
+        topology_data = response
+    
+    # Build map of topology data
+    for switch in topology_data:
+        serial = switch.get('serial')
+        if not serial:
+            continue
+        
+        port_discovery_map[serial] = {}
+        ports = switch.get('ports', [])
+        
+        for port in ports:
+            port_id = str(port.get('portId', ''))
+            cdp = port.get('cdp', [])
+            lldp = port.get('lldp', [])
+            
+            # Check if is meraki device based on CDP/LLDP info
+            if cdp or lldp:
+                is_meraki, device_type, device_info = is_meraki_device(cdp, lldp)
+                if is_meraki:
+                    # Parse LLDP to get discovered device name
+                    lldp_parsed = parse_discovery_info(lldp)
+                    
+                    port_discovery_map[serial][port_id] = {
+                        'device_type': device_type,
+                        'device_name': extract_device_name(lldp_parsed.get('system_name', 'N/A')),
+                    }
+
+def parse_discovery_info(info_list):
+    """
+    Parse CDP or LLDP information from list of {'name': ..., 'value': ...} dicts
+    
+    Args:
+        info_list: List of dicts with 'name' and 'value' keys
+        
+    Returns:
+        Dictionary with lowercased keys
+    """
+    result = {}
+    if info_list and isinstance(info_list, list):
+        for item in info_list:
+            if isinstance(item, dict):
+                name = item.get('name', '').lower().replace(' ', '_')
+                value = item.get('value', '')
+                result[name] = value
+    return result
+
+def is_meraki_device(cdp_list, lldp_list):
+    """
+    Determine if a device is a Meraki device based on CDP or LLDP information.
+    
+    Args:
+        cdp_list: List of CDP information dicts
+        lldp_list: List of LLDP information dicts
+
+    Returns:
+        is_meraki: bool indicating if device is Meraki
+        device_type: str indicating device type
+        device_info_dict: dict with parsed device info
+    """
+    meraki_prefixes = ['MR', 'MS', 'MX', 'MV', 'MG', 'MC', 'MV2', 'MT']
+    
+    # Parse CDP information
+    cdp_info = parse_discovery_info(cdp_list)
+    if cdp_info:
+        platform = cdp_info.get('platform', '')
+        
+        # Check platform for Meraki device types
+        for prefix in meraki_prefixes:
+            if prefix in platform.upper():
+                return (True, prefix, cdp_info)
+        
+        # Some devices might have Meraki in the platform description
+        if 'MERAKI' in platform.upper():
+            for prefix in meraki_prefixes:
+                if prefix in platform.upper():
+                    return (True, prefix, cdp_info)
+    
+    # Parse LLDP information
+    lldp_info = parse_discovery_info(lldp_list)
+    if lldp_info:
+        system_name = lldp_info.get('system_name', '')
+        system_description = lldp_info.get('system_description', '')
+        
+        # Check system name for Meraki device types
+        combined_text = f"{system_name} {system_description}".upper()
+        if 'MERAKI' in combined_text:
+            for prefix in meraki_prefixes:
+                if prefix in combined_text:
+                    return (True, prefix, lldp_info)
+    
+    return (False, None, None)
+
+def extract_device_name(system_name):
+    """
+    Extract a friendly device name from system name string.
+    
+    Args:
+        system_name: The system name string from LLDP info
+
+    Returns:
+        A friendly device name extracted from the system name.
+    """
+    # Simple extraction logic: take the part before the first space
+    if not system_name or system_name == 'N/A':
+        return 'N/A'
+
+    # Split by ' - ' and take the last part
+    return system_name.split(' - ')[-1]
+
+def get_usage(dashboard, organization_id):
+    """
+    Collect and combine various Meraki device data for the organization.
+
+    Args:
+        dashboard: Meraki DashboardAPI instance
+        organization_id: ID of the organization to collect data for
+        
+    Returns:
+        Dictionary containing combined Meraki device data
+    """
     # Shared data containers for threaded collection
     devices = []
-    devicesStatuses = []
-    uplinkStatuses = []
-    vpnStatuses = []
-    orgData = {}
-    switchPortsUsage = []
-    portTagsMap = {}
-    wirelessUsage = []
-    
+    devices_statuses = []
+    uplink_statuses = []
+    vpn_statuses = []
+    org_data = {}
+    switch_ports_usage = []
+    port_tags_map = {}
+    port_discovery_map = {}
+
     # Define all data collection tasks
     threads = [
-        threading.Thread(target=get_devices, args=(devices, dashboard, organizationId)),
-        threading.Thread(target=get_device_statuses, args=(devicesStatuses, dashboard, organizationId)),
-        threading.Thread(target=get_uplink_statuses, args=(uplinkStatuses, dashboard, organizationId)),
-        threading.Thread(target=get_organization, args=(orgData, dashboard, organizationId)),
-        threading.Thread(target=get_switch_ports_usage, args=(switchPortsUsage, dashboard, organizationId)),
-        threading.Thread(target=get_switch_ports_tags_map, args=(portTagsMap, dashboard, organizationId)),
-        threading.Thread(target=get_wireless_usage, args=(wirelessUsage, dashboard, organizationId)),
+        threading.Thread(target=get_devices, args=(devices, dashboard, organization_id)),
+        threading.Thread(target=get_device_statuses, args=(devices_statuses, dashboard, organization_id)),
+        threading.Thread(target=get_uplink_statuses, args=(uplink_statuses, dashboard, organization_id)),
+        threading.Thread(target=get_organization, args=(org_data, dashboard, organization_id)),
+        threading.Thread(target=get_switch_ports_usage, args=(switch_ports_usage, dashboard, organization_id)),
+        threading.Thread(target=get_switch_ports_tags_map, args=(port_tags_map, dashboard, organization_id)),
+        threading.Thread(target=get_switch_ports_topology_discovery, args=(port_discovery_map, dashboard, organization_id)),
     ]
-    
+
     # Add VPN collection thread if enabled
     if 'vpn' in COLLECT_EXTRA:
-        threads.append(threading.Thread(target=get_vpn_statuses, args=(vpnStatuses, dashboard, organizationId)))
-    
+        threads.append(threading.Thread(target=get_vpn_statuses, args=(vpn_statuses, dashboard, organization_id)))
+
     # Start all threads
     for thread in threads:
         thread.start()
-    
+
     # Wait for all threads to complete
     for thread in threads:
         thread.join()
-    
+
     # Fetch networks for this organization so we can report network names instead of IDs
     try:
-        networks = dashboard.organizations.getOrganizationNetworks(organizationId=organizationId, total_pages="all")
+        networks = dashboard.organizations.getOrganizationNetworks(
+            organizationId=organization_id,
+            total_pages="all")
         networks_map = {n.get('id'): n.get('name') for n in networks}
     except Exception:
         networks_map = {}
@@ -218,7 +435,7 @@ def get_usage(dashboard, organizationId):
             continue
 
         the_list[serial] = {}
-        the_list[serial]['orgName'] = orgData.get('name', '')
+        the_list[serial]['orgName'] = org_data.get('name', '')
 
         # Name: prefer explicit name, fall back to MAC when name empty
         name = device.get('name') or device.get('displayName') or device.get('mac') or serial
@@ -258,7 +475,7 @@ def get_usage(dashboard, organizationId):
         if 'usingCellularFailover' in device:
             the_list[serial]['usingCellularFailover'] = device.get('usingCellularFailover')
 
-    for device in devicesStatuses:
+    for device in devices_statuses:
         try:
             the_list[device['serial']]  # should give me KeyError if devices was not picked up by previous search.
         except KeyError:
@@ -267,7 +484,7 @@ def get_usage(dashboard, organizationId):
         the_list[device['serial']]['latencyMs'] = device['timeSeries'][-1]['latencyMs']
         the_list[device['serial']]['lossPercent'] = device['timeSeries'][-1]['lossPercent']
 
-    for device in uplinkStatuses:
+    for device in uplink_statuses:
         try:
             the_list[device['serial']]  # should give me KeyError if devices was not picked up by previous search.
         except KeyError:
@@ -277,7 +494,7 @@ def get_usage(dashboard, organizationId):
             the_list[device['serial']]['uplinks'][uplink['interface']] = uplink['status']
 
     if 'vpn' in COLLECT_EXTRA:
-        for vpn in vpnStatuses:
+        for vpn in vpn_statuses:
             try:
                 the_list[vpn['deviceSerial']]
             except KeyError:
@@ -288,7 +505,7 @@ def get_usage(dashboard, organizationId):
             the_list[vpn['deviceSerial']]['merakiVpnPeers'] = vpn['merakiVpnPeers']
             the_list[vpn['deviceSerial']]['thirdPartyVpnPeers'] = vpn['thirdPartyVpnPeers']
 
-    for device in switchPortsUsage:
+    for device in switch_ports_usage:
         try:
             the_list[device['serial']]  # should give me KeyError if devices was not picked up by previous search.
         except KeyError:
@@ -298,44 +515,37 @@ def get_usage(dashboard, organizationId):
             # Only consider ports that have interval data
             if not port.get('intervals'):
                 continue
-            
+
             # Check if this port is an uplink port based on tags
-            if not is_uplink_port(port_id, serial=device['serial'], port_tags_map=portTagsMap):
-                continue  # Keep only uplink ports
-            
+            if not is_uplink_port(port_id, serial=device['serial'], port_tags_map=port_tags_map) and not is_ap_device(port_id, serial=device['serial'], port_discovery_map=port_discovery_map):
+                continue  # Keep only uplink ports or AP ports
+
             latest_interval = port['intervals'][-1]  # Get the most recent interval data
-            
+
             # Initialize usage and bandwidth dicts if not already present
             if 'switchPortUsage' not in the_list[device['serial']]:
                 the_list[device['serial']]['switchPortUsage'] = {}
             if port_id not in the_list[device['serial']]['switchPortUsage']:
                 the_list[device['serial']]['switchPortUsage'][port_id] = {}
-            
+
             # Total bytes
             data_usage = latest_interval.get('data', {}).get('usage', {})
             the_list[device['serial']]['switchPortUsage'][port_id]['UsageTotalBytes'] = data_usage.get('total', 0)
             the_list[device['serial']]['switchPortUsage'][port_id]['UsageUpstreamBytes'] = data_usage.get('upstream', 0)
             the_list[device['serial']]['switchPortUsage'][port_id]['UsageDownstreamBytes'] = data_usage.get('downstream', 0)
-            
+
             # Bandwidth in kbps
             bandwidth = latest_interval.get('bandwidth', {}).get('usage', {})
             the_list[device['serial']]['switchPortUsage'][port_id]['bandwidthTotalKbps'] = bandwidth.get('total', 0)
             the_list[device['serial']]['switchPortUsage'][port_id]['bandwidthUpstreamKbps'] = bandwidth.get('upstream', 0)
             the_list[device['serial']]['switchPortUsage'][port_id]['bandwidthDownstreamKbps'] = bandwidth.get('downstream', 0)
-    
-    for device in wirelessUsage:
-        try:
-            the_list[device['serial']]  # should give me KeyError if devices was not picked up by previous search.
-        except KeyError:
-            the_list[device['serial']] = {"missing data": True}
-        
-        the_list[device['serial']]['wirelessUsage'] = {}
-        the_list[device['serial']]['wirelessUsage']['totalKbps'] = device.get('totalKbps', 0)
-        the_list[device['serial']]['wirelessUsage']['sentKbps'] = device.get('sentKbps', 0)
-        the_list[device['serial']]['wirelessUsage']['receivedKbps'] = device.get('receivedKbps', 0)
-    
+
+            ap, name = is_ap_device(port_id, serial=device['serial'], port_discovery_map=port_discovery_map)
+            if ap:
+                the_list[device['serial']]['switchPortUsage'][port_id]['ap_device_name'] = name
+
     print('Done')
-    return(the_list)
+    return the_list
 # end of get_usage()
 
 
@@ -353,7 +563,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         # Root HTML page listing organizations with links
         if self.path == "/":
-            dashboard = meraki.DashboardAPI(API_KEY, output_log=False, print_console=True, maximum_retries=20, caller="promethusExporter Emeraude998")
+            dashboard = meraki.DashboardAPI(API_KEY, output_log=False, print_console=False, maximum_retries=20, caller="promethusExporter Emeraude998")
             try:
                 orgs = dashboard.organizations.getOrganizations()
             except meraki.exceptions.APIError:
@@ -430,11 +640,11 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 
         dest_orgId = self.path.split('=')[1]
         print('Target: ', dest_orgId)
-        organizationId = str(dest_orgId)
+        organization_id = str(dest_orgId)
 
         start_time = time.monotonic()
 
-        host_stats = get_usage(dashboard, organizationId)
+        host_stats = get_usage(dashboard, organization_id)
         print("Reporting on:", len(host_stats), "hosts")
 
         uplink_statuses = {'active': 0, 'ready': 1, 'connecting': 2, 'not connected': 3, 'failed': 4}
@@ -467,12 +677,18 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 # TYPE meraki_switch_port_bandwidth_upstream_kbps gauge
 # HELP meraki_switch_port_bandwidth_downstream_kbps Downstream bandwidth usage on switch port in kbps
 # TYPE meraki_switch_port_bandwidth_downstream_kbps gauge
-# HELP meraki_wireless_usage_total_kbps Total wireless usage in kbps
-# TYPE meraki_wireless_usage_total_kbps gauge
-# HELP meraki_wireless_usage_sent_kbps Wireless sent usage in kbps
-# TYPE meraki_wireless_usage_sent_kbps gauge
-# HELP meraki_wireless_usage_received_kbps Wireless received usage in kbps
-# TYPE meraki_wireless_usage_received_kbps gauge
+# HELP meraki_wireless_usage_total_bytes Total wireless usage in bytes
+# TYPE meraki_wireless_usage_total_bytes gauge
+# HELP meraki_wireless_usage_sent_bytes Wireless sent usage in bytes
+# TYPE meraki_wireless_usage_sent_bytes gauge
+# HELP meraki_wireless_usage_received_bytes Wireless received usage in bytes
+# TYPE meraki_wireless_usage_received_bytes gauge
+# HELP meraki_wireless_bandwidth_total_kbps Total wireless bandwidth in kbps
+# TYPE meraki_wireless_bandwidth_total_kbps gauge
+# HELP meraki_wireless_bandwidth_sent_kbps Wireless sent bandwidth in kbps
+# TYPE meraki_wireless_bandwidth_sent_kbps gauge
+# HELP meraki_wireless_bandwidth_received_kbps Wireless received bandwidth in kbps
+# TYPE meraki_wireless_bandwidth_received_kbps gauge
 """
         if 'vpn' in COLLECT_EXTRA:
             response +="""
@@ -509,7 +725,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
             network_name_label = hs.get('networkName') if isinstance(hs.get('networkName'), str) else (hs.get('networkId') if hs.get('networkId') else 'None')
             orgname_label = hs.get('orgName', 'None')
 
-            target = '{serial="' + _esc(host) + '",name="' + _esc(name_label) + '",networkName="' + _esc(network_name_label) + '",orgName="' + _esc(orgname_label) + '",orgId="' + _esc(organizationId) + '"'
+            target = '{name="' + _esc(name_label) + '",office="' + _esc(network_name_label) + '"'
             try:
                 if host_stats[host]['latencyMs'] is not None:
                     response += 'meraki_device_latency' + target + '} ' + str(host_stats[host]['latencyMs']/1000) + '\n'
@@ -543,6 +759,22 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
                     response += 'meraki_vpn_third_party_peers' + target + ',peer_name="' + peer['name'] + '",peer_publicIp="' + peer['publicIp'] + '",reachability="' + peer['reachability'] + '"} ' + reachability_value + '\n'
             if 'switchPortUsage' in host_stats[host]:
                 for port_id, usage_data in host_stats[host]['switchPortUsage'].items():
+                    if 'ap_device_name' in usage_data:
+                        ap_target = '{name="' + _esc(usage_data['ap_device_name']) + '",office="' + _esc(network_name_label) + '"}'
+                        if 'UsageTotalBytes' in usage_data:
+                            response += 'meraki_wireless_usage_total_bytes' + ap_target + '} ' + str(usage_data['UsageTotalBytes']*1024) + '\n'
+                        if 'UsageUpstreamBytes' in usage_data:
+                            response += 'meraki_wireless_usage_received_bytes' + ap_target + '} ' + str(usage_data['UsageUpstreamBytes']*1024) + '\n'
+                        if 'UsageDownstreamBytes' in usage_data:
+                            response += 'meraki_wireless_usage_sent_bytes' + ap_target + '} ' + str(usage_data['UsageDownstreamBytes']*1024) + '\n'
+                        if 'bandwidthTotalKbps' in usage_data:
+                            response += 'meraki_wireless_bandwidth_total_kbps' + ap_target + '} ' + str(usage_data['bandwidthTotalKbps']) + '\n'
+                        if 'bandwidthUpstreamKbps' in usage_data:
+                            response += 'meraki_wireless_bandwidth_received_kbps' + ap_target + '} ' + str(usage_data['bandwidthUpstreamKbps']) + '\n'
+                        if 'bandwidthDownstreamKbps' in usage_data:
+                            response += 'meraki_wireless_bandwidth_sent_kbps' + ap_target + '} ' + str(usage_data['bandwidthDownstreamKbps']) + '\n'
+                        continue  # Skip to next port after reporting AP wireless usage
+                    
                     if 'UsageTotalBytes' in usage_data:
                         response += 'meraki_switch_port_usage_total_bytes' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['UsageTotalBytes']*1024) + '\n'
                     if 'UsageUpstreamBytes' in usage_data:
@@ -554,15 +786,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
                     if 'bandwidthUpstreamKbps' in usage_data:
                         response += 'meraki_switch_port_bandwidth_upstream_kbps' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['bandwidthUpstreamKbps']) + '\n'
                     if 'bandwidthDownstreamKbps' in usage_data:
-                        response += 'meraki_switch_port_bandwidth_downstream_kbps' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['bandwidthDownstreamKbps']) + '\n'
-            if 'wirelessUsage' in host_stats[host]:
-                wireless_data = host_stats[host]['wirelessUsage']
-                if 'totalKbps' in wireless_data:
-                    response += 'meraki_wireless_usage_total_kbps' + target + '} ' + str(wireless_data['totalKbps']) + '\n'
-                if 'sentKbps' in wireless_data:
-                    response += 'meraki_wireless_usage_sent_kbps' + target + '} ' + str(wireless_data['sentKbps']) + '\n'
-                if 'receivedKbps' in wireless_data:
-                    response += 'meraki_wireless_usage_received_kbps' + target + '} ' + str(wireless_data['receivedKbps']) + '\n'            
+                        response += 'meraki_switch_port_bandwidth_downstream_kbps' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['bandwidthDownstreamKbps']) + '\n'      
 
         response += '# TYPE request_processing_seconds summary\n'
         response += 'request_processing_seconds ' + str(time.monotonic() - start_time) + '\n'
