@@ -7,16 +7,15 @@ import meraki
 
 
 def get_devices_and_statuses(devices_and_statuses, dashboard, organization_id):
-    """
-    Fetch all devices in the organization.
+    """Fetch all devices and their statuses in the organization.
     
     Args:
-        devices: List to append device data to
-        dashboard: Meraki DashboardAPI instance
-        organization_id: ID of the organization to fetch devices for
+        devices_and_statuses (list[dict]): List to append device data to
+        dashboard (meraki.DashboardAPI): Meraki API client instance
+        organization_id (str): ID of the organization to fetch devices for
     
     Returns:
-        List of devices and their statuses in the organization
+        None: Modifies list in place
     """
     devices_and_statuses.extend(dashboard.organizations.getOrganizationDevicesAvailabilities(
         organizationId=organization_id,
@@ -24,16 +23,15 @@ def get_devices_and_statuses(devices_and_statuses, dashboard, organization_id):
     print('Got', len(devices_and_statuses), 'Devices')
 
 def get_firewall_latency(firewall_latencies, dashboard, organization_id):
-    """
-    Fetch all device statuses in the organization.
+    """Fetch all firewall latency and loss data in the organization.
     
     Args:
-        firewall_latencies: List to append device status data to
-        dashboard: Meraki DashboardAPI instance
-        organization_id: ID of the organization to fetch device statuses for
+        firewall_latencies (list[dict]): List to append device status data to
+        dashboard (meraki.DashboardAPI): Meraki API client instance
+        organization_id (str): ID of the organization to fetch device statuses for
     
     Returns:
-        List of device statuses in the organization
+        None: Modifies list in place
     """
     firewall_latencies.extend(dashboard.organizations.getOrganizationDevicesUplinksLossAndLatency(
         organizationId=organization_id,
@@ -43,16 +41,15 @@ def get_firewall_latency(firewall_latencies, dashboard, organization_id):
     print('Found latency information on', len(firewall_latencies), 'firewalls WAN Uplinks')
 
 def get_firewall_uplink_statuses(firewall_uplink_statuses, dashboard, organization_id):
-    """
-    Fetch all uplink statuses in the organization.
+    """Fetch all uplink statuses in the organization.
     
     Args:
-        firewall_uplink_statuses: List to append uplink status data to
-        dashboard: Meraki DashboardAPI instance
-        organization_id: ID of the organization to fetch uplink statuses for
+        firewall_uplink_statuses (list[dict]): List to append uplink status data to
+        dashboard (meraki.DashboardAPI): Meraki API client instance
+        organization_id (str): ID of the organization to fetch uplink statuses for
     
     Returns:
-        List of firewall uplink statuses in the organization
+        None: Modifies list in place
     """
     firewall_uplink_statuses.extend(dashboard.appliance.getOrganizationApplianceUplinkStatuses(
         organizationId=organization_id,
@@ -60,13 +57,12 @@ def get_firewall_uplink_statuses(firewall_uplink_statuses, dashboard, organizati
     print('Got', len(firewall_uplink_statuses), 'firewall WAN Uplink Statuses')
 
 def is_uplink_port(port_id, serial=None, port_tags_map=None):
-    """
-    Identify if a port is an uplink port based on tags only.
+    """Identify if a port is an uplink port based on tags only.
     
     Args:
-        port_id: The port ID/number
-        serial: Device serial number (required for tag lookup)
-        port_tags_map: Dict mapping {serial: {portId: [tags]}} (required)
+        port_id (str): The port ID/number
+        serial (str): Device serial number (required for tag lookup)
+        port_tags_map (dict): Dict mapping {serial: {portId: [tags]}} (required)
     
     Returns:
         bool: True if port has 'uplink' tag
@@ -80,17 +76,17 @@ def is_uplink_port(port_id, serial=None, port_tags_map=None):
     return False
 
 def is_ap_device(port_id, serial=None, port_discovery_map=None):
-    """
-    Identify if a port is an access point port based on topology discovery.
+    """Identify if a port is an access point port based on topology discovery.
     
     Args:
-        port_id: The port ID/number
-        serial: Device serial number of the switch (required)
-        port_discovery_map: Dict mapping {serial: {portId: lldp_info}} (required)
+        port_id (str): The port ID/number
+        serial (str): Device serial number of the switch (required)
+        port_discovery_map (dict): Dict mapping {serial: {portId: lldp_info}} (required)
     
     Returns:
-        bool: True if device is an access point
-        str: The device name if it is an access point, else None
+        tuple: A tuple containing:
+            - bool: True if device is an access point
+            - str: The device name if it is an access point, else None
     """
     if port_discovery_map and serial and (serial in port_discovery_map):
         port_info = port_discovery_map[serial].get(str(port_id), {})
@@ -100,16 +96,15 @@ def is_ap_device(port_id, serial=None, port_discovery_map=None):
     return False, None
 
 def get_vpn_statuses(vpn_statuses, dashboard, organization_id):
-    """
-    Fetch all VPN statuses in the organization.
+    """Fetch all VPN statuses in the organization.
     
     Args:
-        vpn_statuses: List to append VPN status data to
-        dashboard: Meraki DashboardAPI instance
-        organization_id: ID of the organization to fetch VPN statuses for
+        vpn_statuses (list[dict]): List to append VPN status data to
+        dashboard (meraki.DashboardAPI): Meraki API client instance
+        organization_id (str): ID of the organization to fetch VPN statuses for
     
     Returns:
-        List of VPN statuses in the organization
+        None: Modifies list in place
     """
     vpn_statuses.extend(dashboard.appliance.getOrganizationApplianceVpnStatuses(
         organizationId=organization_id,
@@ -117,29 +112,27 @@ def get_vpn_statuses(vpn_statuses, dashboard, organization_id):
     print('Got', len(vpn_statuses), 'VPN Statuses')
 
 def get_organization(org_data, dashboard, organization_id):
-    """
-    Fetch organization details.
+    """Fetch organization details.
     
     Args:
-        org_data: Dict to update with organization data
-        dashboard: Meraki DashboardAPI instance
-        organization_id: ID of the organization to fetch details for
+        org_data (dict[str, any]): Dict to update with organization data
+        dashboard (meraki.DashboardAPI): Meraki API client instance
+        organization_id (str): ID of the organization to fetch details for
     
     Returns:
-        Dict with organization details
+        None: Modifies dict in place
     """
     org_data.update(dashboard.organizations.getOrganization(organizationId=organization_id))
 
 def get_organizations(orgs_list, dashboard):
-    """
-    Fetch all organizations accessible by the API key.
+    """Fetch all organizations accessible by the API key.
     
     Args:
-        orgs_list: List to append organization IDs to
-        dashboard: Meraki DashboardAPI instance
+        orgs_list (list[str]): List to append organization IDs to
+        dashboard (meraki.DashboardAPI): Meraki API client instance
     
     Returns:
-        List of organization IDs accessible by the API key
+        None: Modifies list in place
     """
     response = dashboard.organizations.getOrganizations()
     for org in response:  # If you know better way to check that API key has access to an Org, please let me know. (This will rate throtled big time )
@@ -150,19 +143,18 @@ def get_organizations(orgs_list, dashboard):
             pass
 
 def get_switch_ports_usage(switch_ports_usage, dashboard, organization_id):
-    """
-    Fetch switch port usage history for the organization.
+    """Fetch switch port usage history for the organization.\n
     For Prometheus scraping, we need recent data
     Note: Meraki's interval data may not be available for very short timespans
     Using 2 hours as a balance between freshness and data availability
 
     Args:
-        switch_ports_usage: List to append switch port usage data to
-        dashboard: Meraki DashboardAPI instance
-        organization_id: ID of the organization to fetch switch port usage for
+        switch_ports_usage (list[dict]): List to append switch port usage data to
+        dashboard (meraki.DashboardAPI): Meraki API client instance
+        organization_id (str): ID of the organization to fetch switch port usage for
 
     Returns:
-        List of devices with switch port usage data
+        None: Modifies list in place
     """
     timespan = 7200  # 2 hours in seconds
 
@@ -199,16 +191,15 @@ def get_switch_ports_usage(switch_ports_usage, dashboard, organization_id):
         raise
 
 def get_switch_ports_tags_map(port_tags_map, dashboard, organization_id):
-    """
-    Fetch port configuration (including tags) for all switches in the organization.
+    """Fetch port configuration (including tags) for all switches in the organization.
     
     Args:
-        port_tags_map: Dict to update with port tags data
-        dashboard: Meraki DashboardAPI instance
-        organization_id: ID of the organization to fetch port tags for
+        port_tags_map (dict[str, dict[str, list[str]]]): Dict to update with port tags data
+        dashboard (meraki.DashboardAPI): Meraki API client instance
+        organization_id (str): ID of the organization to fetch port tags for
         
     Returns:
-        dict: {serial: {portId: [tags]}}
+        None: Modifies dict in place
     """
     # Get all switch ports for the organization in one API call
     response = dashboard.switch.getOrganizationSwitchPortsBySwitch(
@@ -240,16 +231,15 @@ def get_switch_ports_tags_map(port_tags_map, dashboard, organization_id):
     print('Found', sum(len(ports) for ports in port_tags_map.values()), 'tagged ports')
 
 def get_switch_ports_topology_discovery(port_discovery_map, dashboard, organization_id):
-    """
-    List most recently seen LLDP/CDP discovery and topology information per switch port in an organization.
+    """Fetch Meraki devices connected to switch ports using topology discovery data.
     
     Args:
-        port_discovery_map: Dict to update with topology discovery data
-        dashboard: Meraki DashboardAPI instance
-        organization_id: ID of the organization to fetch topology discovery for
+        port_discovery_map (dict[str, dict[str, dict[str, str]]]): Dict to update with topology discovery data
+        dashboard (meraki.DashboardAPI): Meraki API client instance
+        organization_id (str): ID of the organization to fetch topology discovery for
     
     Returns:
-        List of topology discovery data per switch port
+        None: Modifies dict in place
     """
     response = dashboard.switch.getOrganizationSwitchPortsTopologyDiscoveryByDevice(
         organizationId=organization_id,
@@ -291,15 +281,15 @@ def get_switch_ports_topology_discovery(port_discovery_map, dashboard, organizat
     print('Found', sum(len(ports) for ports in port_discovery_map.values()), 'switch ports connected to Meraki devices')
 
 def parse_discovery_info(info_list):
-    """
-    Parse CDP or LLDP information from list of {'name': ..., 'value': ...} dicts
+    """Parse CDP or LLDP information from list of {'name': ..., 'value': ...} dicts
     
     Args:
-        info_list: List of dicts with 'name' and 'value' keys
+        info_list (list[dict[str, str]]): The Cisco Discovery Protocol (CDP) or Link Layer Discovery Protocol (LLDP) information of the connected device.
         
     Returns:
-        Dictionary with lowercased keys
+        dict: Parsed information with keys as lowercased names and values as corresponding values.
     """
+
     result = {}
     if info_list and isinstance(info_list, list):
         for item in info_list:
@@ -310,18 +300,19 @@ def parse_discovery_info(info_list):
     return result
 
 def is_meraki_device(cdp_list, lldp_list):
-    """
-    Determine if a device is a Meraki device based on CDP or LLDP information.
-    
+    """Determine if a device connected to a port is a Meraki device based on CDP or LLDP information.
+
     Args:
-        cdp_list: List of CDP information dicts
-        lldp_list: List of LLDP information dicts
+        cdp_list (list[dict[str, str]]): The Cisco Discovery Protocol (CDP) information of the connected device.
+        lldp_list (list[dict[str, str]]): The Link Layer Discovery Protocol (LLDP) information of the connected device.
 
     Returns:
-        is_meraki: bool indicating if device is Meraki
-        device_type: str indicating device type
-        device_info_dict: dict with parsed device info
+        list: A list containing:
+            - (bool): Returns True if the device is a Meraki device, False otherwise.
+            - (str): The type of Meraki device if identified.
+            - (dict): Parsed device information from CDP or LLDP.
     """
+
     meraki_prefixes = ['MR', 'MS', 'MX', 'MV', 'MG', 'MC', 'MV2', 'MT']
     
     # Parse CDP information
@@ -356,16 +347,15 @@ def is_meraki_device(cdp_list, lldp_list):
     return (False, None, None)
 
 def get_floor_name_per_device(devices_floor_info, dashboard, organization_id):
-    """
-    Extract floor name from floor information.
+    """Extract floor name from floor information.
     
     Args:
-        floor_info: The floor information dict
-        dashboard: Meraki DashboardAPI instance
-        organization_id: ID of the organization (for logging)
+        devices_floor_info (dict[str, str]): The floor information dict
+        dashboard (meraki.DashboardAPI): Meraki API client instance
+        organization_id (str): ID of the organization (for logging)
         
     Returns:
-        Dict: {serial: floor_name}
+        None: Modifies dict in place
     """
     
     # Fetch all networks in the organization
@@ -408,14 +398,13 @@ def get_floor_name_per_device(devices_floor_info, dashboard, organization_id):
     print('Found', len(devices_floor_info), 'devices associated to a floor name')
 
 def extract_device_name(system_name):
-    """
-    Extract a friendly device name from system name string.
+    """Extract a friendly device name from system name string.
     
     Args:
-        system_name: The system name string from LLDP info
+        system_name (str): The system name string from LLDP info
 
     Returns:
-        A friendly device name extracted from the system name.
+        str: Friendly device name extracted from the system name.
     """
     # Simple extraction logic: take the part before the first space
     if not system_name or system_name == 'N/A':
@@ -425,15 +414,14 @@ def extract_device_name(system_name):
     return system_name.split(' - ')[-1]
 
 def get_usage(dashboard, organization_id):
-    """
-    Collect and combine various Meraki device data for the organization.
+    """Collect and combine various Meraki device data for the organization.
 
     Args:
-        dashboard: Meraki DashboardAPI instance
-        organization_id: ID of the organization to collect data for
+        dashboard (meraki.DashboardAPI): Meraki API client instance
+        organization_id (str): ID of the organization to collect data for
         
     Returns:
-        Dictionary containing combined Meraki device data
+        dict: Dictionary containing combined Meraki device data
     """
     # Shared data containers for threaded collection
     devices_and_statuses = []
@@ -772,6 +760,14 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 """
         # helper to escape label values for Prometheus exposition format
         def _esc(val):
+            """Escape a value for use in Prometheus label values.
+
+            Args:
+                val (Any): Value to escape. May be None or any type convertible to string.
+
+            Returns:
+                str: Escaped string suitable for Prometheus label values.
+            """
             if val is None:
                 return 'None'
             s = str(val)
