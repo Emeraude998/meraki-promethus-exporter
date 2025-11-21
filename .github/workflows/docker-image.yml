@@ -1,4 +1,4 @@
-name: ci
+name: Publish Docker Image
 
 on:
   # publish on releases, e.g. v2.1.13 (image tagged as "2.1.13" - "v" prefix is removed)
@@ -28,11 +28,32 @@ jobs:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GH_PAT }}
+      - 
+        name: Get latest version tag
+        id: get_version
+        run: |
+          # fetch tags
+          git fetch --tags
+
+          # extract latest matching tag pattern v1.*
+          LATEST=$(git tag --list "v1.*" --sort=-v:refname | head -n1)
+
+          if [ -z "$LATEST" ]; then
+            NEW="v1.0"
+          else
+            PATCH=$(echo "$LATEST" | awk -F. '{print $NF}')
+            NEW="v1.$((PATCH+1))"
+          fi
+
+          echo "new_tag=$NEW" >> $GITHUB_OUTPUT
+
       -
         name: Build and publish a Docker image for ${{ github.repository }}
         uses: docker/build-push-action@v5
         with:
-          platforms: linux/amd64, linux/arm64
+          platforms: linux/amd64, linux/arm64, linux/arm/v8
           push: true
           tags: |
             ghcr.io/emeraude998/meraki-dashboard-promethus-exporter:latest
+            ghcr.io/emeraude998/meraki-dashboard-promethus-exporter:${{ steps.get_version.outputs.new_tag }}
+
