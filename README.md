@@ -80,6 +80,6 @@ Please check **/systemd** folder for systemd services and timers configuration f
 
 ### Docker
 
-There is a Docker image available at `ghcr.io/Emeraude998/meraki-dashboard-prometheus-exporter`. You can run the exporter with a command like:
+There is a Docker image available at `ghcr.io/Emeraude998/meraki-prometheus-exporter`. You can run the exporter with a command like:
 
-`docker run -p 9822:9822 -e MERAKI_API_KEY=<api key> ghcr.io/Emeraude998/meraki-dashboard-prometheus-exporter`
+`docker run -p 9822:9822 -e MERAKI_API_KEY=<api key> ghcr.io/Emeraude998/meraki-prometheus-exporter`
