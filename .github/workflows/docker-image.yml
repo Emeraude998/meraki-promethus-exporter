@@ -49,11 +49,17 @@ jobs:
 
           echo "new_tag=$NEW" >> $GITHUB_OUTPUT
 
+      - name: set lower case repository name
+        run: |
+          echo "REPO_LC=${REPO,,}" >>${GITHUB_ENV}
+        env:
+          REPO: '${{ github.repository }}'
+
       - name: Build and publish Docker image
         uses: docker/build-push-action@v5
         with:
           platforms: linux/amd64,linux/arm64,linux/arm/v8
           push: true
           tags: |
-            ghcr.io/${{ toLower(github.repository) }}:latest
-            ghcr.io/${{ toLower(github.repository) }}:${{ steps.get_version.outputs.new_tag }}
+            ghcr.io/${{ env.REPO_LC }}:latest
+            ghcr.io/${{ env.REPO_LC }}:${{ steps.get_version.outputs.new_tag }}
