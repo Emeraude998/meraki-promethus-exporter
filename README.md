@@ -27,6 +27,7 @@ Not all devices exports all metrics.
 | meraki_wireless_bandwidth_total_kbps | kbps | Total wireless bandwidth per AP |
 | meraki_wireless_bandwidth_sent_kbps | kbps | Wireless sent bandwidth per AP |
 | meraki_wireless_bandwidth_received_kbps | kbps | Wireless received bandwidth per AP |
+| meraki_wireless_client_count | int | Number of clients connected to wireless access point |
 | request_processing_seconds | sec | Total processing time for all hosts, exported once |
 
 ### Labels
