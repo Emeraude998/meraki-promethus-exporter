@@ -387,6 +387,7 @@ def get_wireless_ap_clients(ap_clients_info, dashboard, organization_id):
     # Response is a dict with 'items' and 'meta' when using total_pages="all"
     if isinstance(response, dict) and 'items' in response:
 <<<<<<< HEAD
+<<<<<<< HEAD
         all_devices = response['items']
     else:
         all_devices = response
@@ -396,19 +397,29 @@ def get_wireless_ap_clients(ap_clients_info, dashboard, organization_id):
     for device in all_devices:
 =======
         ap_clients_list = response['items']
+=======
+        all_devices = response['items']
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
     else:
-        ap_clients_list = response
+        all_devices = response
     
-    print('Found', sum(device.get('counts', {}).get('byStatus', {}).get('online', 0) for device in ap_clients_list), 'wireless clients')
+    print('Found', sum(device.get('counts', {}).get('byStatus', {}).get('online', 0) for device in all_devices), 'wireless clients')
     
+<<<<<<< HEAD
     for device in ap_clients_list:
 >>>>>>> f01ff2a (Add wireless client count tracking and reporting for access points)
+=======
+    for device in all_devices:
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
         serial = device.get('serial')
         client_count = device.get('counts', {}).get('byStatus', {}).get('online', 0)
         if serial:
             ap_clients_info[serial] = client_count
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
 def cpu_load_calculator(core_count, load_value):
     """Calculate CPU load percentage based on core count and load average value.
     
@@ -420,18 +431,30 @@ def cpu_load_calculator(core_count, load_value):
         float: CPU load percentage
     """
     # Constants
+<<<<<<< HEAD
     normalization_factor = 65536  # Normalization factor
     per_cpu_load_cap = 1.5    # Maximum per-CPU load cap
+=======
+    re = 65536  # Normalization factor
+    he = 1.5    # Maximum per-CPU load cap
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
     
     # Check for invalid core count
     if core_count <= 0:
         return 0.0
     
     # Calculate per-CPU load and normalize to percentage
+<<<<<<< HEAD
     normalized_load = load_value / normalization_factor
     per_cpu_load = normalized_load / core_count
     clamped_value = min(per_cpu_load, per_cpu_load_cap)
     normalized_value = (clamped_value / per_cpu_load_cap)
+=======
+    v = load_value / re
+    per_cpu_load = v / core_count
+    clamped_value = min(per_cpu_load, he)
+    normalized_value = (clamped_value / he)
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
     percentage = round(normalized_value * 100, 2)
     
     return percentage
@@ -472,6 +495,7 @@ def get_wireless_ap_cpu_load_history(ap_cpu_loads, dashboard, organization_id):
     
     print('Found CPU load data for', len(ap_cpu_loads), 'wireless APs')
 
+<<<<<<< HEAD
 def get_device_memory_usage(device_memory_usage, dashboard, organization_id):
     """Return the memory utilization history in kB for devices in the organization.
     
@@ -510,6 +534,8 @@ def get_device_memory_usage(device_memory_usage, dashboard, organization_id):
 
 =======
 >>>>>>> f01ff2a (Add wireless client count tracking and reporting for access points)
+=======
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
 def parse_discovery_info(info_list):
     """Parse CDP or LLDP information from list of {'name': ..., 'value': ...} dicts
     
@@ -666,10 +692,14 @@ def get_usage(dashboard, organization_id):
     devices_floor_info = {}
     ap_clients_info = {}
 <<<<<<< HEAD
+<<<<<<< HEAD
     ap_cpu_loads = {}
     device_memory_usage = {}
 =======
 >>>>>>> f01ff2a (Add wireless client count tracking and reporting for access points)
+=======
+    ap_cpu_loads = {}
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
 
     # Define all data collection tasks
     threads = [
@@ -684,10 +714,14 @@ def get_usage(dashboard, organization_id):
         threading.Thread(target=get_floor_name_per_device, args=(devices_floor_info, dashboard, organization_id)),
         threading.Thread(target=get_wireless_ap_clients, args=(ap_clients_info, dashboard, organization_id)),
 <<<<<<< HEAD
+<<<<<<< HEAD
         threading.Thread(target=get_wireless_ap_cpu_load_history, args=(ap_cpu_loads, dashboard, organization_id)),
         threading.Thread(target=get_device_memory_usage, args=(device_memory_usage, dashboard, organization_id)),
 =======
 >>>>>>> f01ff2a (Add wireless client count tracking and reporting for access points)
+=======
+        threading.Thread(target=get_wireless_ap_cpu_load_history, args=(ap_cpu_loads, dashboard, organization_id)),
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
     ]
 
     # Add VPN collection thread if enabled
@@ -851,11 +885,15 @@ def get_usage(dashboard, organization_id):
         if serial in the_list:
             the_list[serial]['wirelessClientCount'] = client_count
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
             
     # Add wireless AP CPU loads to devices
     for serial, cpu_load in ap_cpu_loads.items():
         if serial in the_list:
             the_list[serial]['wirelessApCpuLoadPercent'] = cpu_load
+<<<<<<< HEAD
             
     # Add device memory usage to devices
     for serial, memory_usage in device_memory_usage.items():
@@ -863,6 +901,8 @@ def get_usage(dashboard, organization_id):
             the_list[serial]['memoryUsedPercent'] = memory_usage
 =======
 >>>>>>> f01ff2a (Add wireless client count tracking and reporting for access points)
+=======
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
 
     print('Done')
     return the_list
@@ -985,6 +1025,18 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 # HELP meraki_device_using_cellular_failover Whether the Meraki device is using cellular failover (1 for true, 0 for false)
 # TYPE meraki_device_using_cellular_failover gauge
 # UNIT meraki_device_using_cellular_failover boolean
+<<<<<<< HEAD
+=======
+# HELP meraki_switch_port_usage_total_bytes Total data usage on switch port in bytes
+# TYPE meraki_switch_port_usage_total_bytes gauge
+# UNIT meraki_switch_port_usage_total_bytes bytes
+# HELP meraki_switch_port_usage_upstream_bytes Upstream data usage on switch port in bytes
+# TYPE meraki_switch_port_usage_upstream_bytes gauge
+# UNIT meraki_switch_port_usage_upstream_bytes bytes
+# HELP meraki_switch_port_usage_downstream_bytes Downstream data usage on switch port in bytes
+# TYPE meraki_switch_port_usage_downstream_bytes gauge
+# UNIT meraki_switch_port_usage_downstream_bytes bytes
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
 # HELP meraki_switch_port_bandwidth_total_kbps Total bandwidth usage on switch port in kbps
 # TYPE meraki_switch_port_bandwidth_total_kbps gauge
 # UNIT meraki_switch_port_bandwidth_total_kbps kbps
@@ -994,6 +1046,18 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 # HELP meraki_switch_port_bandwidth_downstream_kbps Downstream bandwidth usage on switch port in kbps
 # TYPE meraki_switch_port_bandwidth_downstream_kbps gauge
 # UNIT meraki_switch_port_bandwidth_downstream_kbps kbps
+<<<<<<< HEAD
+=======
+# HELP meraki_wireless_usage_total_bytes Total wireless usage in bytes
+# TYPE meraki_wireless_usage_total_bytes gauge
+# UNIT meraki_wireless_usage_total_bytes bytes
+# HELP meraki_wireless_usage_sent_bytes Wireless sent usage in bytes
+# TYPE meraki_wireless_usage_sent_bytes gauge
+# UNIT meraki_wireless_usage_sent_bytes bytes
+# HELP meraki_wireless_usage_received_bytes Wireless received usage in bytes
+# TYPE meraki_wireless_usage_received_bytes gauge
+# UNIT meraki_wireless_usage_received_bytes bytes
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
 # HELP meraki_wireless_bandwidth_total_kbps Total wireless bandwidth in kbps
 # TYPE meraki_wireless_bandwidth_total_kbps gauge
 # UNIT meraki_wireless_bandwidth_total_kbps kbps
@@ -1002,6 +1066,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 # UNIT meraki_wireless_bandwidth_sent_kbps kbps
 # HELP meraki_wireless_bandwidth_received_kbps Wireless received bandwidth in kbps
 # TYPE meraki_wireless_bandwidth_received_kbps gauge
+<<<<<<< HEAD
 <<<<<<< HEAD
 # UNIT meraki_wireless_bandwidth_received_kbps kbps
 # HELP meraki_wireless_client_count Number of clients connected to wireless access point
@@ -1038,6 +1103,15 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 # HELP meraki_wireless_client_count Number of clients connected to wireless access point
 # TYPE meraki_wireless_client_count gauge
 >>>>>>> f01ff2a (Add wireless client count tracking and reporting for access points)
+=======
+# UNIT meraki_wireless_bandwidth_received_kbps kbps
+# HELP meraki_wireless_client_count Number of clients connected to wireless access point
+# TYPE meraki_wireless_client_count gauge
+# UNIT meraki_wireless_client_count count
+# HELP meraki_wireless_ap_cpu_load CPU average load percentage over 5 minutes of wireless access point
+# TYPE meraki_wireless_ap_cpu_load gauge
+# UNIT meraki_wireless_ap_cpu_load percent
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
 """
         if 'vpn' in COLLECT_EXTRA:
             response +="""
@@ -1126,7 +1200,15 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
                     response += 'meraki_wireless_client_count' + target + '} ' + str(host_stats[host]['wirelessClientCount']) + '\n'
             except KeyError:
                 pass
+<<<<<<< HEAD
 >>>>>>> f01ff2a (Add wireless client count tracking and reporting for access points)
+=======
+            try:
+                if 'wirelessApCpuLoadPercent' in host_stats[host]:
+                    response += 'meraki_wireless_ap_cpu_load' + target + '} ' + str(host_stats[host]['wirelessApCpuLoadPercent']) + '\n'
+            except KeyError:
+                pass
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
             if 'uplinks' in host_stats[host]:
                 for uplink in host_stats[host]['uplinks'].keys():
                     response += 'meraki_device_uplink_status' + target + ',uplink="' + uplink + '"} ' + str(firewall_uplink_statuses[host_stats[host]['uplinks'][uplink]]) + '\n'

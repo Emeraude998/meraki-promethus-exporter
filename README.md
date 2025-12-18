@@ -29,10 +29,14 @@ Not all devices exports all metrics.
 | meraki_wireless_bandwidth_received_kbps | kbps | Wireless received bandwidth per AP |
 | meraki_wireless_client_count | int | Number of clients connected to wireless access point |
 <<<<<<< HEAD
+<<<<<<< HEAD
 | meraki_wireless_ap_cpu_load | percent | CPU average load percentage over 5 minutes of wireless access point |
 | meraki_device_memory_used_percent | percent | Memory used percentage of the Meraki device |
 =======
 >>>>>>> 42a2188 (Add wireless count metric to the README)
+=======
+| meraki_wireless_ap_cpu_load | percent | CPU average load percentage over 5 minutes of wireless access point |
+>>>>>>> 326f5a0 (Add CPU load metric for wireless access points and update README)
 | request_processing_seconds | sec | Total processing time for all hosts, exported once |
 
 ### Labels
