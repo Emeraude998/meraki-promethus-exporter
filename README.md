@@ -29,6 +29,7 @@ Not all devices exports all metrics.
 | meraki_wireless_bandwidth_received_kbps | kbps | Wireless received bandwidth per AP |
 | meraki_wireless_client_count | int | Number of clients connected to wireless access point |
 | meraki_wireless_ap_cpu_load | percent | CPU average load percentage over 5 minutes of wireless access point |
+| meraki_device_memory_used_percent | percent | Memory used percentage of the Meraki device |
 | request_processing_seconds | sec | Total processing time for all hosts, exported once |
 
 ### Labels
@@ -59,6 +60,7 @@ Exporter is listening on port 9822 on all interfaces by default
   -p http_port   HTTP port to listen for Prometheus scrapper, default 9822
   -i bind_to_ip  IP address where HTTP server will listen, default all interfaces
   --vpn          If set VPN connection statuses will be also collected
+  --usage        If set extra usage statistics will be also collected
 ```
 GET request for **/?target=\<Organization Id\>** returns data expected for Prometheus Exporter
 
@@ -82,10 +84,10 @@ Please check **/systemd** folder for systemd services and timers configuration f
 
 ### Docker
 
-There is a Docker image available at `ghcr.io/Emeraude998/meraki-prometheus-exporter`. You can run the exporter with a command like:
+There is a Docker image available at `ghcr.io/emeraude998/meraki-prometheus-exporter`. You can run the exporter with a command like:
 
-`docker run -p 9822:9822 -e MERAKI_API_KEY=<api key> ghcr.io/Emeraude998/meraki-prometheus-exporter`
+`docker run -p 9822:9822 -e MERAKI_API_KEY=<api key> ghcr.io/emeraude998/meraki-prometheus-exporter`
 
 If you want to pass through flags, you can do so like this:
 
-`docker run -p 9822:<port> ghcr.io/Emeraude998/meraki-prometheus-exporter -k <api key> -p <port> --vpn`
+`docker run -p 9822:<port> ghcr.io/emeraude998/meraki-prometheus-exporter -k <api key> -p <port> --vpn`

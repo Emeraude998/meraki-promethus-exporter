@@ -453,6 +453,42 @@ def get_wireless_ap_cpu_load_history(ap_cpu_loads, dashboard, organization_id):
     
     print('Found CPU load data for', len(ap_cpu_loads), 'wireless APs')
 
+def get_device_memory_usage(device_memory_usage, dashboard, organization_id):
+    """Return the memory utilization history in kB for devices in the organization.
+    
+    Args:
+        device_memory_usage (dict[str, str]): List to append device memory usage data to
+        dashboard (meraki.DashboardAPI): Meraki API client instance
+        organization_id (str): ID of the organization to fetch device memory usage for
+        
+    Returns:
+        None: Modifies list in place
+    """
+    timespan = 120 # 2 minutes in seconds
+    
+    response = dashboard.organizations.getOrganizationDevicesSystemMemoryUsageHistoryByInterval(
+        organizationId=organization_id,
+        timespan=timespan,
+        total_pages="all"
+    )
+    
+    # Response is a list of dict with 'items' and 'meta'
+    if isinstance(response, dict) and 'items' in response:
+        all_devices = response['items']
+    else:
+        all_devices = response
+        
+    for device in all_devices:
+        serial = device.get('serial')
+        intervals = device.get('intervals') or []
+        if intervals:
+            last_interval = intervals[-1]
+            memory_used_percentage = last_interval.get('memory', {}).get('used', {}).get('percentages', {}).get('maximum', 0)
+        else:
+            memory_used_percentage = 0
+        if serial:
+            device_memory_usage[serial] = memory_used_percentage
+
 def parse_discovery_info(info_list):
     """Parse CDP or LLDP information from list of {'name': ..., 'value': ...} dicts
     
@@ -609,6 +645,7 @@ def get_usage(dashboard, organization_id):
     devices_floor_info = {}
     ap_clients_info = {}
     ap_cpu_loads = {}
+    device_memory_usage = {}
 
     # Define all data collection tasks
     threads = [
@@ -623,6 +660,7 @@ def get_usage(dashboard, organization_id):
         threading.Thread(target=get_floor_name_per_device, args=(devices_floor_info, dashboard, organization_id)),
         threading.Thread(target=get_wireless_ap_clients, args=(ap_clients_info, dashboard, organization_id)),
         threading.Thread(target=get_wireless_ap_cpu_load_history, args=(ap_cpu_loads, dashboard, organization_id)),
+        threading.Thread(target=get_device_memory_usage, args=(device_memory_usage, dashboard, organization_id)),
     ]
 
     # Add VPN collection thread if enabled
@@ -765,11 +803,12 @@ def get_usage(dashboard, organization_id):
             if port_id not in the_list[device['serial']]['switchPortUsage']:
                 the_list[device['serial']]['switchPortUsage'][port_id] = {}
 
-            # Total bytes
-            data_usage = latest_interval.get('data', {}).get('usage', {})
-            the_list[device['serial']]['switchPortUsage'][port_id]['UsageTotalBytes'] = data_usage.get('total', 0)
-            the_list[device['serial']]['switchPortUsage'][port_id]['UsageUpstreamBytes'] = data_usage.get('upstream', 0)
-            the_list[device['serial']]['switchPortUsage'][port_id]['UsageDownstreamBytes'] = data_usage.get('downstream', 0)
+            if 'usage' in COLLECT_EXTRA:
+                # Usage in bytes
+                data_usage = latest_interval.get('data', {}).get('usage', {})
+                the_list[device['serial']]['switchPortUsage'][port_id]['UsageTotalBytes'] = data_usage.get('total', 0)
+                the_list[device['serial']]['switchPortUsage'][port_id]['UsageUpstreamBytes'] = data_usage.get('upstream', 0)
+                the_list[device['serial']]['switchPortUsage'][port_id]['UsageDownstreamBytes'] = data_usage.get('downstream', 0)
 
             # Bandwidth in kbps
             bandwidth = latest_interval.get('bandwidth', {}).get('usage', {})
@@ -789,6 +828,11 @@ def get_usage(dashboard, organization_id):
     for serial, cpu_load in ap_cpu_loads.items():
         if serial in the_list:
             the_list[serial]['wirelessApCpuLoadPercent'] = cpu_load
+            
+    # Add device memory usage to devices
+    for serial, memory_usage in device_memory_usage.items():
+        if serial in the_list:
+            the_list[serial]['memoryUsedPercent'] = memory_usage
 
     print('Done')
     return the_list
@@ -911,15 +955,6 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 # HELP meraki_device_using_cellular_failover Whether the Meraki device is using cellular failover (1 for true, 0 for false)
 # TYPE meraki_device_using_cellular_failover gauge
 # UNIT meraki_device_using_cellular_failover boolean
-# HELP meraki_switch_port_usage_total_bytes Total data usage on switch port in bytes
-# TYPE meraki_switch_port_usage_total_bytes gauge
-# UNIT meraki_switch_port_usage_total_bytes bytes
-# HELP meraki_switch_port_usage_upstream_bytes Upstream data usage on switch port in bytes
-# TYPE meraki_switch_port_usage_upstream_bytes gauge
-# UNIT meraki_switch_port_usage_upstream_bytes bytes
-# HELP meraki_switch_port_usage_downstream_bytes Downstream data usage on switch port in bytes
-# TYPE meraki_switch_port_usage_downstream_bytes gauge
-# UNIT meraki_switch_port_usage_downstream_bytes bytes
 # HELP meraki_switch_port_bandwidth_total_kbps Total bandwidth usage on switch port in kbps
 # TYPE meraki_switch_port_bandwidth_total_kbps gauge
 # UNIT meraki_switch_port_bandwidth_total_kbps kbps
@@ -929,15 +964,6 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 # HELP meraki_switch_port_bandwidth_downstream_kbps Downstream bandwidth usage on switch port in kbps
 # TYPE meraki_switch_port_bandwidth_downstream_kbps gauge
 # UNIT meraki_switch_port_bandwidth_downstream_kbps kbps
-# HELP meraki_wireless_usage_total_bytes Total wireless usage in bytes
-# TYPE meraki_wireless_usage_total_bytes gauge
-# UNIT meraki_wireless_usage_total_bytes bytes
-# HELP meraki_wireless_usage_sent_bytes Wireless sent usage in bytes
-# TYPE meraki_wireless_usage_sent_bytes gauge
-# UNIT meraki_wireless_usage_sent_bytes bytes
-# HELP meraki_wireless_usage_received_bytes Wireless received usage in bytes
-# TYPE meraki_wireless_usage_received_bytes gauge
-# UNIT meraki_wireless_usage_received_bytes bytes
 # HELP meraki_wireless_bandwidth_total_kbps Total wireless bandwidth in kbps
 # TYPE meraki_wireless_bandwidth_total_kbps gauge
 # UNIT meraki_wireless_bandwidth_total_kbps kbps
@@ -953,6 +979,30 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 # HELP meraki_wireless_ap_cpu_load CPU average load percentage over 5 minutes of wireless access point
 # TYPE meraki_wireless_ap_cpu_load gauge
 # UNIT meraki_wireless_ap_cpu_load percent
+# HELP meraki_device_memory_used_percent Memory used percentage of the Meraki device
+# TYPE meraki_device_memory_used_percent gauge
+# UNIT meraki_device_memory_used_percent percent
+"""
+        if 'usage' in COLLECT_EXTRA:
+            response +="""
+# HELP meraki_switch_port_usage_total_bytes Total data usage on switch port in bytes
+# TYPE meraki_switch_port_usage_total_bytes gauge
+# UNIT meraki_switch_port_usage_total_bytes bytes
+# HELP meraki_switch_port_usage_upstream_bytes Upstream data usage on switch port in bytes
+# TYPE meraki_switch_port_usage_upstream_bytes gauge
+# UNIT meraki_switch_port_usage_upstream_bytes bytes
+# HELP meraki_switch_port_usage_downstream_bytes Downstream data usage on switch port in bytes
+# TYPE meraki_switch_port_usage_downstream_bytes gauge
+# UNIT meraki_switch_port_usage_downstream_bytes bytes
+# HELP meraki_wireless_usage_total_bytes Total wireless usage in bytes
+# TYPE meraki_wireless_usage_total_bytes gauge
+# UNIT meraki_wireless_usage_total_bytes bytes
+# HELP meraki_wireless_usage_sent_bytes Wireless sent usage in bytes
+# TYPE meraki_wireless_usage_sent_bytes gauge
+# UNIT meraki_wireless_usage_sent_bytes bytes
+# HELP meraki_wireless_usage_received_bytes Wireless received usage in bytes
+# TYPE meraki_wireless_usage_received_bytes gauge
+# UNIT meraki_wireless_usage_received_bytes bytes
 """
         if 'vpn' in COLLECT_EXTRA:
             response +="""
@@ -1038,6 +1088,11 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
                     response += 'meraki_wireless_ap_cpu_load' + target + '} ' + str(host_stats[host]['wirelessApCpuLoadPercent']) + '\n'
             except KeyError:
                 pass
+            try:
+                if 'memoryUsedPercent' in host_stats[host]:
+                    response += 'meraki_device_memory_used_percent' + target + '} ' + str(host_stats[host]['memoryUsedPercent']) + '\n'
+            except KeyError:
+                pass
             if 'uplinks' in host_stats[host]:
                 for uplink in host_stats[host]['uplinks'].keys():
                     response += 'meraki_device_uplink_status' + target + ',uplink="' + uplink + '"} ' + str(firewall_uplink_statuses[host_stats[host]['uplinks'][uplink]]) + '\n'
@@ -1060,12 +1115,13 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
                         # Get the floor_name from the AP device, not the switch
                         ap_floor_name = get_ap_floor_name(usage_data['ap_device_name'])
                         ap_target = '{name="' + _esc(usage_data['ap_device_name']) + '",office="' + _esc(network_name_label) + '",floor="' + _esc(ap_floor_name) + '",product_type="wireless"'
-                        if 'UsageTotalBytes' in usage_data:
-                            response += 'meraki_wireless_usage_total_bytes' + ap_target + '} ' + str(usage_data['UsageTotalBytes']*1024) + '\n'
-                        if 'UsageUpstreamBytes' in usage_data:
-                            response += 'meraki_wireless_usage_received_bytes' + ap_target + '} ' + str(usage_data['UsageUpstreamBytes']*1024) + '\n'
-                        if 'UsageDownstreamBytes' in usage_data:
-                            response += 'meraki_wireless_usage_sent_bytes' + ap_target + '} ' + str(usage_data['UsageDownstreamBytes']*1024) + '\n'
+                        if 'usage' in COLLECT_EXTRA:
+                            if 'UsageTotalBytes' in usage_data:
+                                response += 'meraki_wireless_usage_total_bytes' + ap_target + '} ' + str(usage_data['UsageTotalBytes']*1024) + '\n'
+                            if 'UsageUpstreamBytes' in usage_data:
+                                response += 'meraki_wireless_usage_received_bytes' + ap_target + '} ' + str(usage_data['UsageUpstreamBytes']*1024) + '\n'
+                            if 'UsageDownstreamBytes' in usage_data:
+                                response += 'meraki_wireless_usage_sent_bytes' + ap_target + '} ' + str(usage_data['UsageDownstreamBytes']*1024) + '\n'
                         if 'bandwidthTotalKbps' in usage_data:
                             response += 'meraki_wireless_bandwidth_total_kbps' + ap_target + '} ' + str(usage_data['bandwidthTotalKbps']) + '\n'
                         if 'bandwidthUpstreamKbps' in usage_data:
@@ -1074,12 +1130,13 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
                             response += 'meraki_wireless_bandwidth_sent_kbps' + ap_target + '} ' + str(usage_data['bandwidthDownstreamKbps']) + '\n'
                         continue  # Skip to next port after reporting AP wireless usage
                     
-                    if 'UsageTotalBytes' in usage_data:
-                        response += 'meraki_switch_port_usage_total_bytes' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['UsageTotalBytes']*1024) + '\n'
-                    if 'UsageUpstreamBytes' in usage_data:
-                        response += 'meraki_switch_port_usage_upstream_bytes' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['UsageUpstreamBytes']*1024) + '\n'
-                    if 'UsageDownstreamBytes' in usage_data:
-                        response += 'meraki_switch_port_usage_downstream_bytes' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['UsageDownstreamBytes']*1024) + '\n'
+                    if 'usage' in COLLECT_EXTRA:
+                        if 'UsageTotalBytes' in usage_data:
+                            response += 'meraki_switch_port_usage_total_bytes' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['UsageTotalBytes']*1024) + '\n'
+                        if 'UsageUpstreamBytes' in usage_data:
+                            response += 'meraki_switch_port_usage_upstream_bytes' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['UsageUpstreamBytes']*1024) + '\n'
+                        if 'UsageDownstreamBytes' in usage_data:
+                            response += 'meraki_switch_port_usage_downstream_bytes' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['UsageDownstreamBytes']*1024) + '\n'
                     if 'bandwidthTotalKbps' in usage_data:
                         response += 'meraki_switch_port_bandwidth_total_kbps' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['bandwidthTotalKbps']) + '\n'
                     if 'bandwidthUpstreamKbps' in usage_data:
@@ -1112,12 +1169,15 @@ if __name__ == '__main__':
                         help='IP address where HTTP server will listen, default all interfaces')
     parser.add_argument('--vpn', dest='collect_vpn_data', action='store_true',
                         help='If set VPN connection statuses will be also collected')
+    parser.add_argument('--usage', dest='collect_usage_data', action='store_true',
+                        help='If set usage byte metrics will be also collected')
     args = vars(parser.parse_args())
     HTTP_PORT_NUMBER = args['p']
     HTTP_BIND_IP = args['i']
     API_KEY = args['k']
     COLLECT_EXTRA = ()
     COLLECT_EXTRA += ( ('vpn',) if args['collect_vpn_data'] else () )
+    COLLECT_EXTRA += ( ('usage',) if args['collect_usage_data'] else () )
 
 
     # starting server
