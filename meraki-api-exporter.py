@@ -555,11 +555,12 @@ def is_meraki_device(cdp_list, lldp_list):
     
     return (False, None, None)
 
-def get_floor_name_per_device(devices_floor_info, dashboard, organization_id):
+def get_floors_information(devices_floor_info, office_coordinates, dashboard, organization_id):
     """Extract floor name from floor information.
     
     Args:
         devices_floor_info (dict[str, str]): The floor information dict
+        office_coordinates (dict): The office coordinates dict
         dashboard (meraki.DashboardAPI): Meraki API client instance
         organization_id (str): ID of the organization (for logging)
         
@@ -593,7 +594,20 @@ def get_floor_name_per_device(devices_floor_info, dashboard, organization_id):
         floor_list = floor_response['items']
     else:
         floor_list = floor_response
+    
+    get_floor_name_per_device(devices_floor_info, floor_list)
+    
+    get_office_coordinates(office_coordinates, floor_list)
 
+def get_floor_name_per_device(devices_floor_info, floor_list):
+    """Map device serials and names to floor names based on floor plan data.
+    Args:
+        devices_floor_info (dict[str, str]): The floor information dict
+        floor_list (list[dict]): List of floor plan data
+
+    Returns:
+        None: Modifies dict in place
+    """
     # Process floor plans to map device serials and names to floor names
     for floor in floor_list:
         floor_name = floor.get('name', 'N/A')
@@ -605,6 +619,33 @@ def get_floor_name_per_device(devices_floor_info, dashboard, organization_id):
                 devices_floor_info[serial] = floor_name
     
     print('Found', len(devices_floor_info), 'devices associated to a floor name')
+
+def get_office_coordinates(office_coordinates, floor_list):
+    """Map floor names to their office coordinates based on floor plan data.
+    
+    Args:
+        office_coordinates (dict): The office coordinates dict
+        floor_list (list[dict]): List of floor plan data
+
+    Returns:
+        None: Modifies dict in place
+    """
+    for floor in floor_list:
+        devices = floor.get('devices', [])
+
+        # Skip floors with no devices (can't determine network_id)
+        if not devices:
+            continue
+            
+        network_id = devices[0].get('networkId')
+        
+        # Only store coordinates for the FIRST floor of each network
+        if network_id and network_id not in office_coordinates:
+            coordinates = floor.get('center', {})
+            if coordinates:
+                office_coordinates[network_id] = coordinates
+    
+    print('Found', len(office_coordinates), 'network office coordinates')
 
 def extract_device_name(system_name):
     """Extract a friendly device name from system name string.
@@ -643,6 +684,7 @@ def get_usage(dashboard, organization_id):
     port_tags_map = {}
     port_discovery_map = {}
     devices_floor_info = {}
+    office_coordinates = {}
     ap_clients_info = {}
     ap_cpu_loads = {}
     device_memory_usage = {}
@@ -657,7 +699,7 @@ def get_usage(dashboard, organization_id):
         threading.Thread(target=get_switch_ports_status_map, args=(port_statuses_map, dashboard, organization_id)),
         threading.Thread(target=get_switch_ports_tags_map, args=(port_tags_map, dashboard, organization_id)),
         threading.Thread(target=get_switch_ports_topology_discovery, args=(port_discovery_map, dashboard, organization_id)),
-        threading.Thread(target=get_floor_name_per_device, args=(devices_floor_info, dashboard, organization_id)),
+        threading.Thread(target=get_floors_information, args=(devices_floor_info, office_coordinates, dashboard, organization_id)),
         threading.Thread(target=get_wireless_ap_clients, args=(ap_clients_info, dashboard, organization_id)),
         threading.Thread(target=get_wireless_ap_cpu_load_history, args=(ap_cpu_loads, dashboard, organization_id)),
         threading.Thread(target=get_device_memory_usage, args=(device_memory_usage, dashboard, organization_id)),
@@ -686,7 +728,7 @@ def get_usage(dashboard, organization_id):
 
     print('-- Combining collected data --')
 
-    the_list = {}
+    device_metric_list = {}
     # Normalize device fields coming from different Meraki endpoints
     for device in devices_and_statuses:
         serial = device.get('serial')
@@ -694,23 +736,23 @@ def get_usage(dashboard, organization_id):
             # Skip devices without serial (some API responses may include non-serial entries)
             continue
 
-        the_list[serial] = {}
-        the_list[serial]['orgName'] = org_data.get('name', '')
+        device_metric_list[serial] = {}
+        device_metric_list[serial]['orgName'] = org_data.get('name', '')
 
         # Name: prefer explicit name, fall back to MAC when name empty
         name = device.get('name') or device.get('displayName') or device.get('mac') or serial
         if name:
-            the_list[serial]['name'] = name
+            device_metric_list[serial]['name'] = name
 
         # Model/product type: different endpoints may use 'model' or 'productType'
         model = device.get('model') or device.get('productType') or device.get('product_type')
         if model:
-            the_list[serial]['model'] = model
+            device_metric_list[serial]['model'] = model
 
         # MAC address
         mac = device.get('mac')
         if mac:
-            the_list[serial]['mac'] = mac
+            device_metric_list[serial]['mac'] = mac
 
         # Network: prefer to report the network name when possible
         network_id = None
@@ -719,67 +761,67 @@ def get_usage(dashboard, organization_id):
         network_id = network_id or device.get('networkId') or device.get('network_id')
         if network_id:
             network_name = networks_map.get(network_id) if networks_map else None
-            the_list[serial]['networkName'] = network_name if network_name is not None else network_id
+            device_metric_list[serial]['networkName'] = network_name if network_name is not None else network_id
 
         # Status
         status = device.get('status')
         if status:
-            the_list[serial]['status'] = status
+            device_metric_list[serial]['status'] = status
         
         # Product Type
         product_type = device.get('productType')
         if product_type:
-            the_list[serial]['productType'] = product_type
+            device_metric_list[serial]['productType'] = product_type
         
         # Floor name
         floor_name = devices_floor_info.get(serial)
         if floor_name:
-            the_list[serial]['floor_name'] = floor_name
+            device_metric_list[serial]['floor_name'] = floor_name
 
         # IP-related fields: only set if present in the device object
         for ip_key in ('wan1Ip', 'wan2Ip', 'lanIp', 'publicIp'):
             if ip_key in device and device.get(ip_key) not in (None, ''):
-                the_list[serial][ip_key] = device.get(ip_key)
+                device_metric_list[serial][ip_key] = device.get(ip_key)
 
         # usingCellularFailover may be present on some device types/endpoints
         if 'usingCellularFailover' in device:
-            the_list[serial]['usingCellularFailover'] = device.get('usingCellularFailover')
+            device_metric_list[serial]['usingCellularFailover'] = device.get('usingCellularFailover')
 
     for device in firewall_latencies:
         try:
-            the_list[device['serial']]  # should give me KeyError if devices was not picked up by previous search.
+            device_metric_list[device['serial']]  # should give me KeyError if devices was not picked up by previous search.
         except KeyError:
-            the_list[device['serial']] = {"missing data": True}
+            device_metric_list[device['serial']] = {"missing data": True}
 
-        the_list[device['serial']]['latencyMs'] = device['timeSeries'][-1]['latencyMs']
-        the_list[device['serial']]['lossPercent'] = device['timeSeries'][-1]['lossPercent']
+        device_metric_list[device['serial']]['latencyMs'] = device['timeSeries'][-1]['latencyMs']
+        device_metric_list[device['serial']]['lossPercent'] = device['timeSeries'][-1]['lossPercent']
 
     for device in firewall_uplink_statuses:
         try:
-            the_list[device['serial']]  # should give me KeyError if devices was not picked up by previous search.
+            device_metric_list[device['serial']]  # should give me KeyError if devices was not picked up by previous search.
         except KeyError:
-            the_list[device['serial']] = {"missing data": True}
-        the_list[device['serial']]['uplinks'] = {}
+            device_metric_list[device['serial']] = {"missing data": True}
+        device_metric_list[device['serial']]['uplinks'] = {}
         for uplink in device['uplinks']:
-            the_list[device['serial']]['uplinks'][uplink['interface']] = uplink['status']
+            device_metric_list[device['serial']]['uplinks'][uplink['interface']] = uplink['status']
 
     if 'vpn' in COLLECT_EXTRA:
         for vpn in vpn_statuses:
             try:
-                the_list[vpn['deviceSerial']]
+                device_metric_list[vpn['deviceSerial']]
             except KeyError:
-                the_list[vpn['deviceSerial']] = {"missing data": True}
+                device_metric_list[vpn['deviceSerial']] = {"missing data": True}
 
-            the_list[vpn['deviceSerial']]['vpnMode'] = vpn['vpnMode']
-            the_list[vpn['deviceSerial']]['exportedSubnets'] = [subnet['subnet'] for subnet in vpn['exportedSubnets']]
-            the_list[vpn['deviceSerial']]['merakiVpnPeers'] = vpn['merakiVpnPeers']
-            the_list[vpn['deviceSerial']]['thirdPartyVpnPeers'] = vpn['thirdPartyVpnPeers']
+            device_metric_list[vpn['deviceSerial']]['vpnMode'] = vpn['vpnMode']
+            device_metric_list[vpn['deviceSerial']]['exportedSubnets'] = [subnet['subnet'] for subnet in vpn['exportedSubnets']]
+            device_metric_list[vpn['deviceSerial']]['merakiVpnPeers'] = vpn['merakiVpnPeers']
+            device_metric_list[vpn['deviceSerial']]['thirdPartyVpnPeers'] = vpn['thirdPartyVpnPeers']
 
     for device in switch_ports_usage:
         try:
-            the_list[device['serial']]  # should give me KeyError if devices was not picked up by previous search.
+            device_metric_list[device['serial']]  # should give me KeyError if devices was not picked up by previous search.
         except KeyError:
-            the_list[device['serial']] = {"missing data": True}
+            device_metric_list[device['serial']] = {"missing data": True}
         for port in device.get('ports', []):
             port_id = str(port.get('portId', ''))
             # Only consider ports that have interval data
@@ -798,44 +840,55 @@ def get_usage(dashboard, organization_id):
             latest_interval = port['intervals'][-1]  # Get the most recent interval data
 
             # Initialize usage and bandwidth dicts if not already present
-            if 'switchPortUsage' not in the_list[device['serial']]:
-                the_list[device['serial']]['switchPortUsage'] = {}
-            if port_id not in the_list[device['serial']]['switchPortUsage']:
-                the_list[device['serial']]['switchPortUsage'][port_id] = {}
+            if 'switchPortUsage' not in device_metric_list[device['serial']]:
+                device_metric_list[device['serial']]['switchPortUsage'] = {}
+            if port_id not in device_metric_list[device['serial']]['switchPortUsage']:
+                device_metric_list[device['serial']]['switchPortUsage'][port_id] = {}
 
             if 'usage' in COLLECT_EXTRA:
                 # Usage in bytes
                 data_usage = latest_interval.get('data', {}).get('usage', {})
-                the_list[device['serial']]['switchPortUsage'][port_id]['UsageTotalBytes'] = data_usage.get('total', 0)
-                the_list[device['serial']]['switchPortUsage'][port_id]['UsageUpstreamBytes'] = data_usage.get('upstream', 0)
-                the_list[device['serial']]['switchPortUsage'][port_id]['UsageDownstreamBytes'] = data_usage.get('downstream', 0)
+                device_metric_list[device['serial']]['switchPortUsage'][port_id]['UsageTotalBytes'] = data_usage.get('total', 0)
+                device_metric_list[device['serial']]['switchPortUsage'][port_id]['UsageUpstreamBytes'] = data_usage.get('upstream', 0)
+                device_metric_list[device['serial']]['switchPortUsage'][port_id]['UsageDownstreamBytes'] = data_usage.get('downstream', 0)
 
             # Bandwidth in kbps
             bandwidth = latest_interval.get('bandwidth', {}).get('usage', {})
-            the_list[device['serial']]['switchPortUsage'][port_id]['bandwidthTotalKbps'] = bandwidth.get('total', 0)
-            the_list[device['serial']]['switchPortUsage'][port_id]['bandwidthUpstreamKbps'] = bandwidth.get('upstream', 0)
-            the_list[device['serial']]['switchPortUsage'][port_id]['bandwidthDownstreamKbps'] = bandwidth.get('downstream', 0)
+            device_metric_list[device['serial']]['switchPortUsage'][port_id]['bandwidthTotalKbps'] = bandwidth.get('total', 0)
+            device_metric_list[device['serial']]['switchPortUsage'][port_id]['bandwidthUpstreamKbps'] = bandwidth.get('upstream', 0)
+            device_metric_list[device['serial']]['switchPortUsage'][port_id]['bandwidthDownstreamKbps'] = bandwidth.get('downstream', 0)
 
             if is_ap:
-                the_list[device['serial']]['switchPortUsage'][port_id]['ap_device_name'] = ap_name
+                device_metric_list[device['serial']]['switchPortUsage'][port_id]['ap_device_name'] = ap_name
 
     # Add wireless client counts to devices
     for serial, client_count in ap_clients_info.items():
-        if serial in the_list:
-            the_list[serial]['wirelessClientCount'] = client_count
+        if serial in device_metric_list:
+            device_metric_list[serial]['wirelessClientCount'] = client_count
             
     # Add wireless AP CPU loads to devices
     for serial, cpu_load in ap_cpu_loads.items():
-        if serial in the_list:
-            the_list[serial]['wirelessApCpuLoadPercent'] = cpu_load
+        if serial in device_metric_list:
+            device_metric_list[serial]['wirelessApCpuLoadPercent'] = cpu_load
             
     # Add device memory usage to devices
     for serial, memory_usage in device_memory_usage.items():
-        if serial in the_list:
-            the_list[serial]['memoryUsedPercent'] = memory_usage
+        if serial in device_metric_list:
+            device_metric_list[serial]['memoryUsedPercent'] = memory_usage
+    
+    office_metric_list = {}    
+    for office, coordinates in office_coordinates.items():
+        try:
+            office_metric_list[office]  # should give me KeyError if devices was not picked up by previous search.
+        except KeyError:
+            office_metric_list[office] = {} # Initialize empty dict if not present
+        network_name = networks_map.get(office) if networks_map else None
+        office_metric_list[office]['officeName'] = network_name if network_name is not None else office
+        office_metric_list[office]['lat'] = coordinates['lat']
+        office_metric_list[office]['lon'] = coordinates['lng']
 
     print('Done')
-    return the_list
+    return device_metric_list, office_metric_list
 # end of get_usage()
 
 
@@ -934,7 +987,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 
         start_time = time.monotonic()
 
-        host_stats = get_usage(dashboard, organization_id)
+        host_stats, office_stats = get_usage(dashboard, organization_id)
         print("Reporting on:", len(host_stats), "hosts\n")
 
         firewall_uplink_statuses = {'active': 0, 'ready': 1, 'connecting': 2, 'not connected': 3, 'failed': 4}
@@ -982,6 +1035,8 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 # HELP meraki_device_memory_used_percent Memory used percentage of the Meraki device
 # TYPE meraki_device_memory_used_percent gauge
 # UNIT meraki_device_memory_used_percent percent
+# HELP meraki_office_coordinates The office coordinates of the Meraki device's network
+# TYPE meraki_office_coordinates gauge
 """
         if 'usage' in COLLECT_EXTRA:
             response +="""
@@ -1133,7 +1188,12 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
                     if 'bandwidthUpstreamKbps' in usage_data:
                         response += 'meraki_switch_port_bandwidth_upstream_kbps' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['bandwidthUpstreamKbps']) + '\n'
                     if 'bandwidthDownstreamKbps' in usage_data:
-                        response += 'meraki_switch_port_bandwidth_downstream_kbps' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['bandwidthDownstreamKbps']) + '\n'      
+                        response += 'meraki_switch_port_bandwidth_downstream_kbps' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['bandwidthDownstreamKbps']) + '\n'
+                        
+        for office in office_stats.keys():
+            os = office_stats.get(office, {}) if isinstance(office_stats, dict) else {}
+            office_target = '{office="' + _esc(os.get('officeName')) + '",lat="' + _esc(os.get('lat')) + '",lon="' + _esc(os.get('lon')) + '"'
+            response += 'meraki_office_coordinates' + office_target + '} ' + '1' + '\n'
 
         response += '# TYPE request_processing_seconds summary\n'
         response += 'request_processing_seconds ' + str(time.monotonic() - start_time) + '\n'
