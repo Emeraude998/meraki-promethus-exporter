@@ -4,6 +4,144 @@ import time
 
 import configargparse
 import meraki
+import requests
+
+
+class MerakiEarlyAccessAPI:
+    """Helper class for making early access API calls not yet available in the SDK."""
+    
+    BASE_URL = "https://api.meraki.com/api/v1"
+    MAX_RETRIES = 5
+    INITIAL_RETRY_DELAY = 1  # seconds
+    
+    def __init__(self, dashboard):
+        """Initialize with a Meraki dashboard instance.
+        
+        Args:
+            dashboard (meraki.DashboardAPI): Meraki API client instance
+        """
+        self.api_key = API_KEY
+        self.session = requests.Session()
+        self.session.headers.update({
+            'X-Cisco-Meraki-API-Key': self.api_key,
+            'Content-Type': 'application/json'
+        })
+    
+    def get(self, endpoint, params=None):
+        """Make a GET request to a Meraki API endpoint with rate limiting handling.
+        
+        Args:
+            endpoint (str): API endpoint (e.g., '/organizations/{id}/assurance/...')
+            params (dict): Query parameters
+            
+        Returns:
+            dict: JSON response
+            
+        Raises:
+            requests.exceptions.RequestException: If the request fails after retries
+        """
+        url = f"{self.BASE_URL}{endpoint}"
+        retry_delay = self.INITIAL_RETRY_DELAY
+        
+        for attempt in range(self.MAX_RETRIES):
+            try:
+                response = self.session.get(url, params=params)
+                
+                # Handle rate limiting (429)
+                if response.status_code == 429:
+                    retry_after = int(response.headers.get('Retry-After', retry_delay))
+                    print(f"Rate limited (429). Retrying after {retry_after} seconds...")
+                    time.sleep(retry_after)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+                
+                # Raise for other HTTP errors
+                response.raise_for_status()
+                
+                return response.json()
+                
+            except requests.exceptions.RequestException as e:
+                if attempt == self.MAX_RETRIES - 1:
+                    raise
+                print(f"Request failed (attempt {attempt + 1}/{self.MAX_RETRIES}): {e}")
+                time.sleep(retry_delay)
+                retry_delay *= 2
+        
+        return None
+
+
+def get_wireless_rf_health(ap_rf_health, dashboard, organization_id, networks):
+    """Fetch wireless access point RF health scores for 5 GHz band.
+    
+    Args:
+        ap_rf_health (dict[str, dict]): Dict to update with RF health data
+            Structure: {serial: {'network_id': str, 'device_name': str, 'overall_score': float}}
+        dashboard (meraki.DashboardAPI): Meraki API client instance
+        organization_id (str): ID of the organization
+        networks (dict[str, str]): Dict mapping network IDs to network names
+        
+    Returns:
+        None: Modifies dict in place
+    """
+    timespan = 900  # 15 minutes in seconds (must be multiple of 300)
+    
+    # Create early access API helper
+    early_api = MerakiEarlyAccessAPI(dashboard)
+    
+    # Build the endpoint
+    endpoint = f"/organizations/{organization_id}/assurance/connectivity/wireless/rfHealth/byBand"
+    
+    params = {
+        'networkIds[]': list(networks.keys()),
+        'timespan': timespan
+    }
+    
+    try:
+        print(f"Fetching RF health data for {len(networks)} networks...")
+        response = early_api.get(endpoint, params=params)
+        
+        if not response:
+            print("No RF health data returned")
+            return
+        
+        # Process the response
+        # Expected structure: { "five": [{"index": 1, "rfHealthScores": [...]}] }
+        five_ghz_data = response.get('five', [])
+        
+        # Get rfHealthScores from the first element (there should be only one with all data)
+        if not five_ghz_data or not isinstance(five_ghz_data, list):
+            print("No 5 GHz RF health data found")
+            return
+            
+        rf_health_scores = five_ghz_data[0].get('rfHealthScores', [])
+        
+        for device_data in rf_health_scores:
+            # Extract network and device information
+            network_info = device_data.get('network', {})
+            device_info = device_data.get('device', {})
+            
+            network_id = network_info.get('id')
+            device_serial = device_info.get('serial')
+            device_name = device_info.get('name')
+            
+            # Get the last reading (most recent 5-minute period)
+            readings = device_data.get('readings', [])
+            if readings and device_serial:
+                last_reading = readings[-1]  # Most recent reading
+                overall_score = last_reading.get('overallScore')
+                
+                if overall_score is not None:
+                    ap_rf_health[device_serial] = {
+                        'network_id': network_id,
+                        'device_name': device_name or 'Unknown',
+                        'overall_score': overall_score
+                    }
+        
+        print(f"Found RF health data for {len(ap_rf_health)} wireless APs")
+        
+    except Exception as e:
+        print(f"Error fetching RF health data: {e}")
+        # Don't raise - allow the exporter to continue without RF health data
 
 
 def get_devices_and_statuses(devices_and_statuses, dashboard, organization_id):
@@ -21,6 +159,7 @@ def get_devices_and_statuses(devices_and_statuses, dashboard, organization_id):
         organizationId=organization_id,
         total_pages="all"))
     print('Got', len(devices_and_statuses), 'Devices')
+
 
 def get_firewall_latency(firewall_latencies, dashboard, organization_id):
     """Fetch all firewall latency and loss data in the organization.
@@ -40,6 +179,7 @@ def get_firewall_latency(firewall_latencies, dashboard, organization_id):
         total_pages="all"))
     print('Found latency information on', len(firewall_latencies), 'firewalls WAN Uplinks')
 
+
 def get_firewall_uplink_statuses(firewall_uplink_statuses, dashboard, organization_id):
     """Fetch all uplink statuses in the organization.
     
@@ -55,6 +195,7 @@ def get_firewall_uplink_statuses(firewall_uplink_statuses, dashboard, organizati
         organizationId=organization_id,
         total_pages="all"))
     print('Got', len(firewall_uplink_statuses), 'firewall WAN Uplink Statuses')
+
 
 def is_uplink_port(port_id, serial=None, port_tags_map=None, port_discovery_map=None, port_statuses_map=None):
     """Identify if a port is an uplink port based on tags, topology discovery and port status.
@@ -112,6 +253,7 @@ def is_uplink_port(port_id, serial=None, port_tags_map=None, port_discovery_map=
     # 3. Otherwise return FALSE
     return False
 
+
 def is_ap_device(port_id, serial=None, port_discovery_map=None):
     """Identify if a port is an access point port based on topology discovery.
     
@@ -132,6 +274,7 @@ def is_ap_device(port_id, serial=None, port_discovery_map=None):
 
     return False, None
 
+
 def get_vpn_statuses(vpn_statuses, dashboard, organization_id):
     """Fetch all VPN statuses in the organization.
     
@@ -148,6 +291,7 @@ def get_vpn_statuses(vpn_statuses, dashboard, organization_id):
         total_pages="all"))
     print('Got', len(vpn_statuses), 'VPN Statuses')
 
+
 def get_organization(org_data, dashboard, organization_id):
     """Fetch organization details.
     
@@ -160,6 +304,7 @@ def get_organization(org_data, dashboard, organization_id):
         None: Modifies dict in place
     """
     org_data.update(dashboard.organizations.getOrganization(organizationId=organization_id))
+
 
 def get_organizations(orgs_list, dashboard):
     """Fetch all organizations accessible by the API key.
@@ -178,6 +323,7 @@ def get_organizations(orgs_list, dashboard):
             orgs_list.append(org['id'])
         except meraki.exceptions.APIError:
             pass
+
 
 def get_switch_ports_usage(switch_ports_usage, dashboard, organization_id):
     """Fetch switch port usage history for the organization.\n
@@ -271,6 +417,7 @@ def get_switch_ports_status_map(port_statuses_map, dashboard, organization_id):
         print(f"Error fetching switch ports statuses: {e}")
         raise
 
+
 def get_switch_ports_tags_map(port_tags_map, dashboard, organization_id):
     """Fetch port configuration (including tags) for all switches in the organization.
     
@@ -310,6 +457,7 @@ def get_switch_ports_tags_map(port_tags_map, dashboard, organization_id):
                 port_tags_map[serial][port_id] = tags
     
     print('Found', sum(len(ports) for ports in port_tags_map.values()), 'tagged ports')
+
 
 def get_switch_ports_topology_discovery(port_discovery_map, dashboard, organization_id):
     """Fetch Meraki devices connected to switch ports using topology discovery data.
@@ -361,6 +509,7 @@ def get_switch_ports_topology_discovery(port_discovery_map, dashboard, organizat
     
     print('Found', sum(len(ports) for ports in port_discovery_map.values()), 'switch ports connected to Meraki devices')
 
+
 def get_wireless_ap_clients(ap_clients_info, dashboard, organization_id):
     """List access point client count at the moment in an organization
     
@@ -390,6 +539,7 @@ def get_wireless_ap_clients(ap_clients_info, dashboard, organization_id):
         if serial:
             ap_clients_info[serial] = client_count
 
+
 def cpu_load_calculator(core_count, load_value):
     """Calculate CPU load percentage based on core count and load average value.
     
@@ -416,6 +566,7 @@ def cpu_load_calculator(core_count, load_value):
     percentage = round(normalized_value * 100, 2)
     
     return percentage
+
 
 def get_wireless_ap_cpu_load_history(ap_cpu_loads, dashboard, organization_id):
     """Fetch the 5 minutes cpu load average of wireless access point for the organization.
@@ -453,6 +604,7 @@ def get_wireless_ap_cpu_load_history(ap_cpu_loads, dashboard, organization_id):
     
     print('Found CPU load data for', len(ap_cpu_loads), 'wireless APs')
 
+
 def get_device_memory_usage(device_memory_usage, dashboard, organization_id):
     """Return the memory utilization history in kB for devices in the organization.
     
@@ -489,6 +641,7 @@ def get_device_memory_usage(device_memory_usage, dashboard, organization_id):
         if serial:
             device_memory_usage[serial] = memory_used_percentage
 
+
 def parse_discovery_info(info_list):
     """Parse CDP or LLDP information from list of {'name': ..., 'value': ...} dicts
     
@@ -507,6 +660,7 @@ def parse_discovery_info(info_list):
                 value = item.get('value', '')
                 result[name] = value
     return result
+
 
 def is_meraki_device(cdp_list, lldp_list):
     """Determine if a device connected to a port is a Meraki device based on CDP or LLDP information.
@@ -555,39 +709,60 @@ def is_meraki_device(cdp_list, lldp_list):
     
     return (False, None, None)
 
-def get_floors_information(devices_floor_info, office_coordinates, dashboard, organization_id):
-    """Extract floor name from floor information.
+
+def get_network_enabled_ssids(network_ssids, dashboard, networks):
+    """Fetch all enabled SSIDs per network to ensure complete metrics even when no clients are connected.
+    
+    Args:
+        network_ssids (dict[str, list[str]]): Dict to update with enabled SSID names per network
+            Structure: {network_id: ['SSID1', 'SSID2', ...]}
+        dashboard (meraki.DashboardAPI): Meraki API client instance
+        networks (dict[str, str]): Dict mapping network IDs to network names
+        
+    Returns:
+        None: Modifies dict in place
+    """
+    total_ssids = 0
+    
+    for network_id in networks:
+        try:
+            response = dashboard.wireless.getNetworkWirelessSsids(networkId=network_id)
+            
+            # Initialize list for this network
+            network_ssids[network_id] = []
+            
+            # Filter for enabled SSIDs and extract their names
+            for ssid_config in response:
+                if ssid_config.get('enabled', False):
+                    ssid_name = ssid_config.get('name')
+                    if ssid_name:
+                        network_ssids[network_id].append(ssid_name)
+                        total_ssids += 1
+        
+        except Exception as e:
+            print(f"Error fetching SSIDs for network {network_id}: {e}")
+            # Initialize empty list on error to avoid key errors later
+            network_ssids[network_id] = []
+    
+    print(f'Found {total_ssids} enabled SSIDs across {len(network_ssids)} networks')
+
+
+def get_offices_information(devices_floor_info, office_coordinates, dashboard, networks):
+    """Extract offices information: Geographical coordinates, Floor names, Devices per floor.
     
     Args:
         devices_floor_info (dict[str, str]): The floor information dict
         office_coordinates (dict): The office coordinates dict
         dashboard (meraki.DashboardAPI): Meraki API client instance
-        organization_id (str): ID of the organization (for logging)
+        networks (dict[str, str]): Dict mapping network IDs to network names
         
     Returns:
         None: Modifies dict in place
     """
     
-    # Fetch all networks in the organization
-    response = dashboard.organizations.getOrganizationNetworks(
-        organizationId=organization_id,
-        total_pages="all")
-        
-    if isinstance(response, dict) and 'items' in response:
-        network_list = response['items']
-    else:
-        network_list = response
-        
-    print('Got', len(network_list), 'networks to check for floor plans')
-
     floor_response = []
     # Fetch floor plans for each network
-    for network in network_list:
-        network_id = network.get('id')
-        
-        if not network_id:
-            continue
-        
+    for network_id in networks:
         floor_response.extend(dashboard.networks.getNetworkFloorPlans(networkId=network_id))
         
     if isinstance(floor_response, dict) and 'items' in floor_response:
@@ -598,6 +773,7 @@ def get_floors_information(devices_floor_info, office_coordinates, dashboard, or
     get_floor_name_per_device(devices_floor_info, floor_list)
     
     get_office_coordinates(office_coordinates, floor_list)
+
 
 def get_floor_name_per_device(devices_floor_info, floor_list):
     """Map device serials and names to floor names based on floor plan data.
@@ -619,6 +795,7 @@ def get_floor_name_per_device(devices_floor_info, floor_list):
                 devices_floor_info[serial] = floor_name
     
     print('Found', len(devices_floor_info), 'devices associated to a floor name')
+
 
 def get_office_coordinates(office_coordinates, floor_list):
     """Map floor names to their office coordinates based on floor plan data.
@@ -647,6 +824,7 @@ def get_office_coordinates(office_coordinates, floor_list):
     
     print('Found', len(office_coordinates), 'network office coordinates')
 
+
 def extract_device_name(system_name):
     """Extract a friendly device name from system name string.
     
@@ -663,6 +841,7 @@ def extract_device_name(system_name):
     # Split by ' - ' and take the last part
     return system_name.split(' - ')[-1]
 
+
 def get_usage(dashboard, organization_id):
     """Collect and combine various Meraki device data for the organization.
 
@@ -673,6 +852,19 @@ def get_usage(dashboard, organization_id):
     Returns:
         dict: Dictionary containing combined Meraki device data
     """
+
+    # Fetch networks for this organization so we can report network names instead of IDs
+    # It will allow to pass this dict to collection tasks if needed
+    try:
+        networks = dashboard.organizations.getOrganizationNetworks(
+            organizationId=organization_id,
+            total_pages="all")
+        networks_map = {n.get('id'): n.get('name') for n in networks}
+        print('Found', len(networks_map), 'networks in the organization')
+
+    except Exception:
+        networks_map = {}
+
     # Shared data containers for threaded collection
     devices_and_statuses = []
     firewall_latencies = []
@@ -688,6 +880,8 @@ def get_usage(dashboard, organization_id):
     ap_clients_info = {}
     ap_cpu_loads = {}
     device_memory_usage = {}
+    ap_rf_health = {}
+    network_ssids = {}
 
     # Define all data collection tasks
     threads = [
@@ -699,10 +893,12 @@ def get_usage(dashboard, organization_id):
         threading.Thread(target=get_switch_ports_status_map, args=(port_statuses_map, dashboard, organization_id)),
         threading.Thread(target=get_switch_ports_tags_map, args=(port_tags_map, dashboard, organization_id)),
         threading.Thread(target=get_switch_ports_topology_discovery, args=(port_discovery_map, dashboard, organization_id)),
-        threading.Thread(target=get_floors_information, args=(devices_floor_info, office_coordinates, dashboard, organization_id)),
+        threading.Thread(target=get_offices_information, args=(devices_floor_info, office_coordinates, dashboard, networks_map)),
         threading.Thread(target=get_wireless_ap_clients, args=(ap_clients_info, dashboard, organization_id)),
         threading.Thread(target=get_wireless_ap_cpu_load_history, args=(ap_cpu_loads, dashboard, organization_id)),
         threading.Thread(target=get_device_memory_usage, args=(device_memory_usage, dashboard, organization_id)),
+        threading.Thread(target=get_network_enabled_ssids, args=(network_ssids, dashboard, networks_map)),
+        threading.Thread(target=get_wireless_rf_health, args=(ap_rf_health, dashboard, organization_id, networks_map)),
     ]
 
     # Add VPN collection thread if enabled
@@ -716,15 +912,6 @@ def get_usage(dashboard, organization_id):
     # Wait for all threads to complete
     for thread in threads:
         thread.join()
-
-    # Fetch networks for this organization so we can report network names instead of IDs
-    try:
-        networks = dashboard.organizations.getOrganizationNetworks(
-            organizationId=organization_id,
-            total_pages="all")
-        networks_map = {n.get('id'): n.get('name') for n in networks}
-    except Exception:
-        networks_map = {}
 
     print('-- Combining collected data --')
 
@@ -865,17 +1052,22 @@ def get_usage(dashboard, organization_id):
     for serial, client_count in ap_clients_info.items():
         if serial in device_metric_list:
             device_metric_list[serial]['wirelessClientCount'] = client_count
-            
+
     # Add wireless AP CPU loads to devices
     for serial, cpu_load in ap_cpu_loads.items():
         if serial in device_metric_list:
             device_metric_list[serial]['wirelessApCpuLoadPercent'] = cpu_load
-            
+
+    # Add wireless AP RH Health overall score to devices
+    for serial, rf_health in ap_rf_health.items():
+        if serial in device_metric_list:
+            device_metric_list[serial]['wirelessApRfHealthOverallScore'] = rf_health.get('overall_score')
+
     # Add device memory usage to devices
     for serial, memory_usage in device_memory_usage.items():
         if serial in device_metric_list:
             device_metric_list[serial]['memoryUsedPercent'] = memory_usage
-    
+
     office_metric_list = {}    
     for office, coordinates in office_coordinates.items():
         try:
@@ -1032,6 +1224,9 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 # HELP meraki_wireless_ap_cpu_load CPU average load percentage over 5 minutes of wireless access point
 # TYPE meraki_wireless_ap_cpu_load gauge
 # UNIT meraki_wireless_ap_cpu_load percent
+# HELP meraki_wireless_ap_rf_health_score Network RF health score (factor impacts based on client connectivity, neighbors, interference, noise)
+# TYPE meraki_wireless_ap_rf_health_score gauge
+# UNIT meraki_wireless_ap_rf_health_score count
 # HELP meraki_device_memory_used_percent Memory used percentage of the Meraki device
 # TYPE meraki_device_memory_used_percent gauge
 # UNIT meraki_device_memory_used_percent percent
@@ -1137,6 +1332,8 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
                 response += 'meraki_wireless_client_count' + target + '} ' + str(host_stats[host]['wirelessClientCount']) + '\n'
             if 'wirelessApCpuLoadPercent' in host_stats[host]:
                 response += 'meraki_wireless_ap_cpu_load' + target + '} ' + str(host_stats[host]['wirelessApCpuLoadPercent']) + '\n'
+            if 'wirelessApRfHealthOverallScore' in host_stats[host]:
+                response += 'meraki_wireless_ap_rf_health_score' + target + '} ' + str(host_stats[host]['wirelessApRfHealthOverallScore']) + '\n'
             if 'memoryUsedPercent' in host_stats[host]:
                 response += 'meraki_device_memory_used_percent' + target + '} ' + str(host_stats[host]['memoryUsedPercent']) + '\n'
             if 'uplinks' in host_stats[host]:
@@ -1175,7 +1372,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
                         if 'bandwidthDownstreamKbps' in usage_data:
                             response += 'meraki_wireless_bandwidth_sent_kbps' + ap_target + '} ' + str(usage_data['bandwidthDownstreamKbps']) + '\n'
                         continue  # Skip to next port after reporting AP wireless usage
-                    
+
                     if 'usage' in COLLECT_EXTRA:
                         if 'UsageTotalBytes' in usage_data:
                             response += 'meraki_switch_port_usage_total_bytes' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['UsageTotalBytes']*1024) + '\n'
@@ -1189,7 +1386,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
                         response += 'meraki_switch_port_bandwidth_upstream_kbps' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['bandwidthUpstreamKbps']) + '\n'
                     if 'bandwidthDownstreamKbps' in usage_data:
                         response += 'meraki_switch_port_bandwidth_downstream_kbps' + target + ',portId="' + _esc(port_id) + '"} ' + str(usage_data['bandwidthDownstreamKbps']) + '\n'
-                        
+
         for office in office_stats.keys():
             os = office_stats.get(office, {}) if isinstance(office_stats, dict) else {}
             office_target = '{office="' + _esc(os.get('officeName')) + '",lat="' + _esc(os.get('lat')) + '",lon="' + _esc(os.get('lon')) + '"'

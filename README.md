@@ -29,7 +29,9 @@ Not all devices exports all metrics.
 | meraki_wireless_bandwidth_received_kbps | kbps | Wireless received bandwidth per AP |
 | meraki_wireless_client_count | int | Number of clients connected to wireless access point |
 | meraki_wireless_ap_cpu_load | percent | CPU average load percentage over 5 minutes of wireless access point |
+| meraki_wireless_ap_rf_health_score | int | RF health score for 5 GHz band (0-100, based on interference, noise, neighbors, etc.) |
 | meraki_device_memory_used_percent | percent | Memory used percentage of the Meraki device |
+| meraki_office_coordinates | int | Office coordinates (latitude and longitude) for network location mapping |
 | request_processing_seconds | sec | Total processing time for all hosts, exported once |
 
 ### Labels
@@ -44,6 +46,15 @@ All metrics but __request_processing_seconds__ have the following labels:
 **meraki_device_uplink_status** also carries the "uplink" label containing the uplink name.
 
 **meraki_switch_port_\*** metrics also carry the "portId" label containing the port ID. Note: Ports tagged with 'uplink' or connected to Meraki APs are exported.
+
+**meraki_office_coordinates** uses different labels: "office" (network name), "lat" (latitude), and "lon" (longitude).
+
+### Features
+
+- **RF Health Monitoring**: Collects 5 GHz RF health scores using Meraki Early Access APIs for comprehensive wireless performance monitoring
+- **Topology Discovery**: Identifies uplink ports and AP-connected switch ports automatically using CDP/LLDP
+- **Floor Plan Integration**: Associates devices with floor names when floor plans are configured
+- **Multi-threaded Collection**: Parallel API calls for faster data collection across large organizations
 
 
 ### How to Use
